@@ -36,16 +36,26 @@ function saveWatched(w) {
 // orphaned process and the stale lock files so the user never has to run pkill.
 function clearStaleProfileLock() {
   const cleared = [];
-  try {
-    // Match only Chrome's own --user-data-dir flag. A looser pattern also
-    // matches any shell whose command line mentions the profile, including the
-    // one that launched this process.
-    // "--" is required: the pattern itself begins with "--", which pkill would
-    // otherwise parse as an option and silently match nothing.
-    execFileSync("pkill", ["-f", "--", `--user-data-dir=${PROFILE_DIR}`], { stdio: "ignore" });
-    cleared.push("orphaned chrome");
-  } catch {
-    /* nothing was running */
+  // Match only Chrome's own --user-data-dir flag ("--" so pkill does not read
+  // the pattern as an option). SIGKILL: a soft TERM left 8 helper processes
+  // alive and holding the profile lock, which hung the next launch at
+  // "Launching WhatsApp Web…" indefinitely. Then wait until they are gone.
+  const pattern = `--user-data-dir=${PROFILE_DIR}`;
+  const count = () => {
+    try {
+      return execFileSync("pgrep", ["-f", "--", pattern], { encoding: "utf8" }).trim().split("\n").filter(Boolean).length;
+    } catch {
+      return 0;
+    }
+  };
+  if (count() > 0) {
+    try { execFileSync("pkill", ["-9", "-f", "--", pattern], { stdio: "ignore" }); } catch { /* gone */ }
+    // Synchronous wait (max ~2s) for the kernel to reap them.
+    const deadline = Date.now() + 2000;
+    while (count() > 0 && Date.now() < deadline) {
+      try { execFileSync("sleep", ["0.1"], { stdio: "ignore" }); } catch { break; }
+    }
+    cleared.push(count() === 0 ? "orphaned chrome" : "orphaned chrome (some survived)");
   }
   for (const f of ["SingletonLock", "SingletonCookie", "SingletonSocket"]) {
     const full = path.join(PROFILE_DIR, f);

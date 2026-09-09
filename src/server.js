@@ -248,8 +248,11 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (url.pathname === "/api/wa/reset" && req.method === "POST") {
-    await live.logout({ unlink: false }); // keep the link, just clear the browser
-    return json(res, 200, live.snapshot());
+    // Keep the login; guarantee the browser and its profile lock are gone so
+    // the next Connect cannot hang on a leftover process.
+    live.logout({ unlink: false });
+    const cleared = live.clearStaleProfileLock();
+    return json(res, 200, { ...live.snapshot(), cleared });
   }
 
   if (url.pathname === "/api/wa/logout" && req.method === "POST") {
