@@ -184,17 +184,15 @@ function start() {
       // Opening a chat and paging history run long in-page; the default 30s
       // protocol timeout aborts them mid-way.
       protocolTimeout: 240_000,
-      // In a container we install Chromium ourselves and point at it; locally
-      // this is unset and puppeteer uses its bundled build.
-      ...(process.env.PUPPETEER_EXECUTABLE_PATH ? { executablePath: process.env.PUPPETEER_EXECUTABLE_PATH } : {}),
-      args: [
-        "--no-sandbox",
-        "--disable-setuid-sandbox",
-        "--disable-dev-shm-usage",
-        "--disable-gpu",
-        "--no-first-run",
-        "--no-zygote",
-      ],
+      // Only honour a container Chromium path when it actually exists -- a stale
+      // /usr/bin/chromium on a Mac would make the launch fail with "Code: null".
+      ...(process.env.PUPPETEER_EXECUTABLE_PATH && fs.existsSync(process.env.PUPPETEER_EXECUTABLE_PATH)
+        ? { executablePath: process.env.PUPPETEER_EXECUTABLE_PATH }
+        : {}),
+      // Minimal, cross-platform flag set. NOTE: --no-zygote / --single-process
+      // crash Chrome on macOS; do not add them. --disable-dev-shm-usage is the
+      // only container-specific one and is harmless elsewhere.
+      args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"],
     },
   });
 
