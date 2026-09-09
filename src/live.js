@@ -188,14 +188,18 @@ function start({ fresh = false } = {}) {
   // A start that never reaches "qr" or "ready" would otherwise sit on
   // "starting" forever with nothing to act on.
   clearTimeout(state.startTimer);
+  // A shared-CPU free-tier container boots Chrome far slower than a laptop, so
+  // this is generous. LAUNCH_TIMEOUT_MS can override.
+  const launchTimeout = Number(process.env.LAUNCH_TIMEOUT_MS || 240_000);
   state.startTimer = setTimeout(() => {
     if (state.status === "starting") {
       state.status = "error";
       state.error =
-        "Timed out launching WhatsApp. Press Connect again; if it repeats, stop the server, run: pkill -f session-monitor";
+        `Chrome did not start within ${Math.round(launchTimeout / 1000)}s. On a free-tier container this usually means it ran out of memory — check the host logs, then press Connect again.`;
+      step(state.error, "error");
       hardStop();
     }
-  }, 90_000);
+  }, launchTimeout);
 
   // A remote webVersionCache was tried to work around the broken chat layer; it
   // had no effect (WhatsApp Web self-updates past it) and cost a GitHub fetch on
@@ -431,6 +435,7 @@ function start({ fresh = false } = {}) {
     state.status = "error";
     hardStop();
     clearInterval(state.claimTimer);
+    console.error("  [wa] launch failed:", (e && e.message) || e);
     state.error = state.claimedSession || contextLost
       ? "Could not hold the WhatsApp session. Close web.whatsapp.com in every other browser tab, then press Connect."
       : e.message || "unknown startup failure";
