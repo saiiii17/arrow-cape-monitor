@@ -10,6 +10,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     procps \
   && rm -rf /var/lib/apt/lists/*
 
+# Fail the BUILD (not a mystery at runtime) if Chromium cannot execute here.
+RUN chromium --version \
+ && chromium --headless --no-sandbox --disable-gpu --disable-dev-shm-usage \
+      --dump-dom about:blank > /dev/null \
+ && echo "chromium smoke test OK"
+
 ENV PUPPETEER_SKIP_DOWNLOAD=1 \
     PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium \
     NODE_ENV=production

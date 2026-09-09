@@ -346,6 +346,15 @@ try {
   /* nothing to clear */
 }
 
+// One-line environment fingerprint: on a container this is what tells you which
+// Chromium is in use and how much memory the box actually has.
+try {
+  const info = live.environmentInfo();
+  console.log(`  env: ${info.platform}/${info.arch} · chromium ${info.chromium} · ${info.memory}`);
+} catch {
+  /* non-fatal */
+}
+
 // Start Chrome immediately so the QR is ready before anyone clicks Connect.
 try { live.prewarm(); } catch { /* non-fatal */ }
 

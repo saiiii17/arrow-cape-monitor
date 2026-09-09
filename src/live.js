@@ -7,6 +7,28 @@ const { execFileSync } = require("child_process");
 const { append, stats, toRecord, clearAll } = require("./livestore");
 
 const PROFILE_DIR = path.join(process.env.WWEBJS_PATH || path.join(__dirname, "..", ".wwebjs_auth"), "session-monitor");
+
+// One budget for every startup clock. A shared-CPU container needs minutes,
+// not the 30s defaults.
+const LAUNCH_MS = Number(process.env.LAUNCH_TIMEOUT_MS || 240_000);
+
+// cgroup v2 memory accounting -- the only reliable way to tell an OOM kill
+// apart from a slow start inside a container.
+function containerMemory() {
+  const read = (f) => {
+    try {
+      return fs.readFileSync(f, "utf8").trim();
+    } catch {
+      return null;
+    }
+  };
+  const current = read("/sys/fs/cgroup/memory.current");
+  if (!current) return null; // not in a cgroup v2 container (e.g. macOS)
+  const events = read("/sys/fs/cgroup/memory.events") || "";
+  const oomKill = (events.match(/oom_kill (\d+)/) || [])[1] || "0";
+  const mb = (v) => (v && /^\d+$/.test(v) ? Math.round(Number(v) / 1048576) + "MB" : v);
+  return { used: mb(current), limit: mb(read("/sys/fs/cgroup/memory.max")), oomKill };
+}
 const WATCH_FILE = path.join(__dirname, "..", "data", "watched-groups.json");
 
 // The chosen groups must survive a server restart, or captured messages become
@@ -198,7 +220,7 @@ function start({ fresh = false } = {}) {
   clearTimeout(state.startTimer);
   // A shared-CPU free-tier container boots Chrome far slower than a laptop, so
   // this is generous. LAUNCH_TIMEOUT_MS can override.
-  const launchTimeout = Number(process.env.LAUNCH_TIMEOUT_MS || 240_000);
+  const launchTimeout = LAUNCH_MS;
   state.startTimer = setTimeout(() => {
     if (state.status === "starting") {
       state.status = "error";
@@ -218,6 +240,12 @@ function start({ fresh = false } = {}) {
     // WWEBJS_PATH lets the login live on a persistent disk in the cloud (paid
     // tier), so a redeploy or restart does not force a re-scan. Unset locally.
     authStrategy: new LocalAuth({ clientId: "monitor", ...(process.env.WWEBJS_PATH ? { dataPath: process.env.WWEBJS_PATH } : {}) }),
+    // whatsapp-web.js enforces its OWN auth timeout, default 30s, covering the
+    // WhatsApp Web load + inject phase. On a slow/shared-CPU box that expires
+    // and the client sits "authenticated" but never reaches ready -- exactly the
+    // hang seen on the free-tier container. protocolTimeout does not cover it.
+    authTimeoutMs: LAUNCH_MS,
+    qrMaxRetries: 0,
     // NOTE: takeoverOnConflict was tried and made things worse on this build --
     // it produced a permanent "Use here" conflict even with no other client
     // open. The plain config below is what actually reached "ready".
@@ -231,9 +259,15 @@ function start({ fresh = false } = {}) {
       : {}),
     puppeteer: {
       headless: true,
-      // Opening a chat and paging history run long in-page; the default 30s
-      // protocol timeout aborts them mid-way.
-      protocolTimeout: 240_000,
+      // Three separate clocks, all 30s by default and all too short here:
+      //   timeout         -> Chromium process launch
+      //   protocolTimeout -> DevTools protocol calls (long in-page pagination)
+      //   authTimeoutMs   -> set on the Client above, WhatsApp Web load/inject
+      timeout: LAUNCH_MS,
+      protocolTimeout: LAUNCH_MS,
+      // Chromium's own stdout/stderr, for diagnosing a silent launch failure or
+      // OOM kill in a container. Noisy, so opt in with WA_DEBUG=1.
+      ...(process.env.WA_DEBUG === "1" ? { dumpio: true } : {}),
       // Only honour a container Chromium path when it actually exists -- a stale
       // /usr/bin/chromium on a Mac would make the launch fail with "Code: null".
       ...(process.env.PUPPETEER_EXECUTABLE_PATH && fs.existsSync(process.env.PUPPETEER_EXECUTABLE_PATH)
@@ -413,6 +447,26 @@ function start({ fresh = false } = {}) {
       console.error("  capture error:", e && e.message);
     }
   });
+
+  // Surface the Chromium process: a silent exit (OOM kill in a container) would
+  // otherwise look identical to a slow start.
+  client.on("ready", () => {}); // no-op; ensures listeners are attached early
+  setTimeout(async () => {
+    try {
+      const proc = client && client.pupBrowser && client.pupBrowser.process();
+      if (!proc) return;
+      const mem = containerMemory();
+      console.log(`  [wa] chromium pid=${proc.pid}${mem ? ` mem=${mem.used}/${mem.limit}` : ""}`);
+      proc.on("exit", (code, signal) => {
+        const m = containerMemory();
+        const oom = m && m.oomKill !== "0" ? ` (cgroup oom_kill=${m.oomKill} — out of memory)` : "";
+        console.error(`  [wa] chromium exited code=${code} signal=${signal}${oom}`);
+        step(`Chromium exited${oom || ` (code ${code})`}`, "error");
+      });
+    } catch {
+      /* browser not up yet */
+    }
+  }, 8000);
 
   // Poll for the dialog from the start; it can appear before authentication.
   startClaimLoop(3000);
@@ -1415,4 +1469,27 @@ function prewarm() {
   }, 1500);
 }
 
-module.exports = { start, snapshot, backfill, syncAll, prewarm, probeModules, tryHydrate, diagnoseHistoryInternals, historySince, openChatByName, inspectAfterOpen, setWatching, logout, send, refreshGroups, importExport, clearStaleProfileLock, wipeSession };
+// What Chromium are we actually about to run, and inside what memory limit?
+function environmentInfo() {
+  const p = process.env.PUPPETEER_EXECUTABLE_PATH;
+  let chromium = "bundled (puppeteer)";
+  if (p) {
+    if (!fs.existsSync(p)) chromium = `MISSING at ${p} — falling back to bundled`;
+    else {
+      try {
+        chromium = execFileSync(p, ["--version"], { encoding: "utf8" }).trim();
+      } catch (e) {
+        chromium = `${p} (version check failed: ${(e && e.message) || e})`;
+      }
+    }
+  }
+  const mem = containerMemory();
+  return {
+    platform: process.platform,
+    arch: process.arch,
+    chromium,
+    memory: mem ? `container ${mem.used}/${mem.limit}` : "host (no cgroup limit)",
+  };
+}
+
+module.exports = { start, snapshot, backfill, syncAll, prewarm, environmentInfo, probeModules, tryHydrate, diagnoseHistoryInternals, historySince, openChatByName, inspectAfterOpen, setWatching, logout, send, refreshGroups, importExport, clearStaleProfileLock, wipeSession };
