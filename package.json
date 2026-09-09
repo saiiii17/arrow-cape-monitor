@@ -1,0 +1,27 @@
+{
+  "name": "c5-c3-broker-monitor",
+  "version": "1.0.0",
+  "description": "C5 account digest (RIO/FMG/BHP) and C3/WAFR rundown from WhatsApp broker groups",
+  "main": "src/server.js",
+  "scripts": {
+    "dashboard": "node src/server.js",
+    "digest": "node src/cli.js",
+    "today": "node src/cli.js latest",
+    "send": "node src/send-daily.js",
+    "test": "node src/test-extract.js && node src/c3/test-c3.js && node src/test-source.js",
+    "c3": "node src/c3/cli.js",
+    "c3:compare": "node src/c3/compare.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.102.0",
+    "dotenv": "^17.4.2",
+    "groq-sdk": "^1.2.1",
+    "qrcode": "^1.5.4",
+    "qrcode-terminal": "^0.12.0",
+    "whatsapp-web.js": "^1.34.7"
+  }
+}

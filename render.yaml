@@ -1,0 +1,26 @@
+# Render blueprint (FREE tier). In Render: New → Blueprint → point at this repo.
+# Free tier notes:
+#  - The URL is permanent and independent of your Mac (runs in Render's cloud).
+#  - It sleeps after ~15 min idle and cold-starts (~1 min) on the next request.
+#  - No persistent disk on free, so a cold start resets the WhatsApp session —
+#    the owner re-scans the QR when he returns. Upgrade to 'starter' ($7/mo) for
+#    always-on + a persistent disk (add the disk block back then).
+services:
+  - type: web
+    name: arrow-cape-monitor
+    runtime: docker
+    plan: free
+    healthCheckPath: /api/dates
+    envVars:
+      - key: PORT
+        value: 4321
+      - key: C3_PROVIDER
+        value: anthropic
+      - key: C3_ANTHROPIC_MODEL
+        sync: false
+      - key: PUPPETEER_EXECUTABLE_PATH
+        value: /usr/bin/chromium
+      - key: ANTHROPIC_API_KEY
+        sync: false     # set in the Render dashboard
+      - key: GROQ_API_KEY
+        sync: false

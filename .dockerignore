@@ -1,0 +1,11 @@
+node_modules
+.wwebjs_auth
+.wwebjs_cache
+.env
+_chat.txt
+_chat 2.txt
+data/live
+data/c3-cache
+data/c3-cache-anthropic
+docs
+.git

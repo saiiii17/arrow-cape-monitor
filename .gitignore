@@ -1,0 +1,21 @@
+# secrets & local state
+.env
+.env.*
+node_modules/
+.wwebjs_auth/
+.wwebjs_cache/
+data/live/
+data/c3-cache/
+data/c3-cache-anthropic/
+data/digests/
+data/*.csv
+data/*.json
+watched-groups.json
+
+# demo fixtures containing real broker chats — never publish these
+_chat.txt
+_chat 2.txt
+
+# os / editor
+.DS_Store
+*.log

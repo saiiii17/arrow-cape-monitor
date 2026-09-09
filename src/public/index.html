@@ -1,0 +1,892 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Arrow Cape Monitor</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='13' font-size='13'>&#9875;</text></svg>">
+<style>
+  :root{
+    --bg:#f4f5f7; --panel:#fff; --sunk:#fafbfc; --ink:#14161a; --dim:#5f6672; --faint:#8b929e;
+    --line:#e4e6ea; --line2:#eef0f3; --accent:#1f6feb; --accent-soft:#e8f0fe;
+    --rio:#2f7d5c; --fmg:#a8620f; --bhp:#b03030;
+    --good:#1f8a53; --warn:#b8860b; --bad:#c0392b;
+    --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
+    --r:10px; --shadow:0 1px 2px rgba(16,20,28,.05),0 4px 14px rgba(16,20,28,.05);
+  }
+  @media (prefers-color-scheme:dark){
+    :root{
+      --bg:#0f1114; --panel:#171a1f; --sunk:#1c2027; --ink:#e9eaec; --dim:#9aa1ad; --faint:#6f7783;
+      --line:#272c34; --line2:#20242b; --accent:#4c8ffb; --accent-soft:#17243b;
+      --rio:#5cbf92; --fmg:#dd9a45; --bhp:#e57373;
+      --good:#4cc38a; --warn:#d9a441; --bad:#e06c5f;
+      --shadow:0 1px 2px rgba(0,0,0,.3),0 4px 16px rgba(0,0,0,.25);
+    }
+  }
+  *{box-sizing:border-box}
+  /* .ctl sets display:flex, which would otherwise defeat the hidden attribute */
+  [hidden]{display:none!important}
+  html{-webkit-text-size-adjust:100%}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font:14px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif}
+
+  header{position:sticky;top:0;z-index:20;background:var(--panel);border-bottom:1px solid var(--line);
+    padding:10px 22px;display:flex;align-items:center;gap:14px;flex-wrap:wrap;box-shadow:var(--shadow)}
+  .brand{font-size:14px;font-weight:650;letter-spacing:-.01em;white-space:nowrap}
+  .brand span{color:var(--faint);font-weight:400}
+  nav{display:flex;gap:2px;background:var(--sunk);padding:3px;border-radius:9px;border:1px solid var(--line)}
+  nav button{font:inherit;font-size:13px;font-weight:500;border:0;background:none;color:var(--dim);
+    padding:5px 14px;border-radius:6px;cursor:pointer;white-space:nowrap}
+  nav button[aria-selected="true"]{background:var(--panel);color:var(--ink);box-shadow:var(--shadow)}
+  .grow{flex:1}
+  .ctl{display:flex;align-items:center;gap:7px}
+  label.k{font-size:11px;color:var(--faint);text-transform:uppercase;letter-spacing:.07em;font-weight:600}
+  select,input,button.btn{font:inherit;font-size:13px;padding:5px 10px;border-radius:7px;
+    border:1px solid var(--line);background:var(--panel);color:var(--ink)}
+  input{width:104px}
+  input[type="date"]{width:142px;font-family:var(--mono);font-size:12.5px}
+  input[type="date"]::-webkit-calendar-picker-indicator{filter:invert(.5);cursor:pointer}
+  button.btn{cursor:pointer}
+  button.btn:hover{border-color:var(--dim)}
+  button.primary{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:500}
+  button.primary:hover{filter:brightness(1.08)}
+  button:disabled{opacity:.45;cursor:default}
+
+  main{padding:20px 22px 60px;max-width:1680px;margin:0 auto}
+  section[hidden]{display:none}
+  .bar{display:flex;align-items:baseline;gap:12px;margin:0 0 14px;flex-wrap:wrap}
+  h2{font-size:15px;margin:0;font-weight:650;letter-spacing:-.01em}
+  .sub{font-family:var(--mono);font-size:11.5px;color:var(--faint)}
+
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);box-shadow:var(--shadow);overflow:hidden}
+  .card > h3{margin:0;padding:10px 14px;font-size:12px;font-weight:650;letter-spacing:.07em;
+    text-transform:uppercase;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:9px;color:var(--dim)}
+  .pill{margin-left:auto;font-family:var(--mono);font-size:11px;color:var(--dim);background:var(--sunk);
+    border:1px solid var(--line);border-radius:20px;padding:1px 9px;font-weight:500}
+
+  /* ---- C5 ---- */
+  .cols3{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;align-items:start}
+  .card[data-a="RIO"] > h3{color:var(--rio)} .card[data-a="FMG"] > h3{color:var(--fmg)} .card[data-a="BHP"] > h3{color:var(--bhp)}
+  .upd{padding:10px 14px;border-bottom:1px solid var(--line2)}
+  .upd:last-child{border-bottom:0}
+  .updtop{display:flex;gap:8px;align-items:baseline;margin-bottom:4px}
+  .t{font-family:var(--mono);font-size:12px;font-weight:600}
+  .who{color:var(--faint);font-size:12px}
+  .tag{font-size:9.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--dim);
+    border:1px solid var(--line);border-radius:4px;padding:0 5px;margin-left:auto;white-space:nowrap}
+  pre.body{margin:0;font-family:var(--mono);font-size:12.5px;line-height:1.5;white-space:pre-wrap;word-break:break-word}
+  .daysep{padding:5px 14px;background:var(--sunk);border-top:1px solid var(--line);border-bottom:1px solid var(--line2);
+    font-family:var(--mono);font-size:11px;font-weight:600;color:var(--dim);letter-spacing:.04em}
+  /* Original-message popover: the native title tooltip is slow and unstyled. */
+  #pop{position:fixed;z-index:60;max-width:460px;background:var(--panel);color:var(--ink);
+    border:1px solid var(--line);border-radius:10px;box-shadow:0 8px 30px rgba(0,0,0,.28);
+    padding:10px 12px;opacity:0;pointer-events:none;transition:opacity .12s}
+  #pop.show{opacity:1}
+  #pop .ph{font-family:var(--mono);font-size:11px;color:var(--faint);margin-bottom:6px;
+    display:flex;gap:8px;align-items:baseline}
+  #pop .ph b{color:var(--dim);font-weight:600}
+  #pop pre{margin:0;font-family:var(--mono);font-size:12.5px;line-height:1.5;
+    white-space:pre-wrap;word-break:break-word;max-height:300px;overflow:auto}
+  #pop .hint{margin-top:7px;font-size:10.5px;color:var(--faint);letter-spacing:.04em}
+  .wab{display:flex;align-items:center;gap:10px;padding:12px 14px;font-weight:600;font-size:13.5px}
+  .dot{width:10px;height:10px;border-radius:50%;background:var(--faint);flex:none}
+  .dot.busy{background:var(--warn);animation:pulse 1s infinite}
+  .dot.ok{background:var(--good)} .dot.bad{background:var(--bad)}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+  .steps{list-style:none;margin:0;padding:0 14px 10px;font-family:var(--mono);font-size:11.5px;color:var(--dim);
+    max-height:170px;overflow:auto;border-top:1px solid var(--line2)}
+  .steps li{padding:3px 0;display:flex;gap:10px}
+  .steps li time{color:var(--faint);flex:none}
+  .steps li.ok{color:var(--good)} .steps li.warn{color:var(--warn)} .steps li.error{color:var(--bad)}
+  tr.origrow td{background:var(--sunk);padding:10px 14px}
+  tr.origrow pre.body{margin-top:5px;font-size:12px}
+  .mentions{padding:8px 14px;background:var(--sunk);border-top:1px solid var(--line2)}
+  .mentions h4{margin:0 0 4px;font-size:10px;font-weight:600;color:var(--faint);text-transform:uppercase;letter-spacing:.07em}
+  .mentions div{font-family:var(--mono);font-size:11.5px;color:var(--dim)}
+  .empty{padding:16px 14px;color:var(--faint);font-style:italic;font-size:13px}
+
+  /* ---- tables ---- */
+  .cols2{display:grid;grid-template-columns:1fr 1fr;gap:14px;align-items:start}
+  .scroll{overflow-x:auto}
+  table{border-collapse:collapse;width:100%;font-size:12.5px}
+  th{text-align:left;font-size:10px;letter-spacing:.07em;text-transform:uppercase;color:var(--faint);
+    font-weight:600;padding:8px 10px;border-bottom:1px solid var(--line);white-space:nowrap;background:var(--sunk)}
+  td{padding:7px 10px;border-bottom:1px solid var(--line2);vertical-align:top}
+  tr:last-child td{border-bottom:0}
+  tbody tr{cursor:pointer}
+  tbody tr:hover{background:var(--sunk)}
+  tbody tr[aria-selected="true"]{background:var(--accent-soft)}
+  .nm{font-weight:600}
+  .num{font-family:var(--mono);white-space:nowrap}
+  .muted{color:var(--faint)}
+  .chip{display:inline-block;font-size:10px;padding:0 5px;border-radius:4px;border:1px solid var(--line);
+    color:var(--dim);margin-right:3px;white-space:nowrap}
+  .rt{font-family:var(--mono);font-weight:600;white-space:nowrap}
+  .ind{font-size:10px;color:var(--faint);text-transform:uppercase;letter-spacing:.05em}
+
+  /* ---- matches ---- */
+  .mrow{border-bottom:1px solid var(--line)}
+  .mrow:last-child{border-bottom:0}
+  .mhead{padding:11px 14px;display:flex;gap:10px;align-items:baseline;flex-wrap:wrap;background:var(--sunk)}
+  .mhead .nm{font-size:13.5px}
+  .cands{padding:4px 0}
+  .cand1{padding:9px 14px;border-top:1px solid var(--line2)}
+  .why1{font-size:11.5px;color:var(--dim);margin-top:3px}
+  .cand{display:grid;grid-template-columns:52px 1fr;gap:12px;padding:10px 14px;border-top:1px solid var(--line2)}
+  .cand:first-child{border-top:0}
+  .score{font-family:var(--mono);font-size:17px;font-weight:700;text-align:center;line-height:1.15;padding-top:1px}
+  .score small{display:block;font-size:9px;font-weight:600;letter-spacing:.06em;color:var(--faint);text-transform:uppercase}
+  .s-hi{color:var(--good)} .s-md{color:var(--warn)} .s-lo{color:var(--dim)}
+  .cand .vsl{font-weight:600;margin-bottom:3px}
+  .why{list-style:none;margin:5px 0 0;padding:0;display:flex;flex-wrap:wrap;gap:4px 6px}
+  .why li{font-size:11.5px;color:var(--dim);background:var(--sunk);border:1px solid var(--line2);
+    border-radius:5px;padding:2px 7px}
+  .why li.block{color:var(--bad);border-color:var(--bad)}
+  .bar-gap{height:3px;width:180px;border-radius:2px;background:var(--line);overflow:hidden;margin-top:6px}
+  .bar-gap i{display:block;height:100%;background:var(--good)}
+  .cand .s-md ~ * .bar-gap i{background:var(--warn)}
+
+  pre.rundown{margin:0;padding:14px;font-family:var(--mono);font-size:12.5px;line-height:1.6;
+    white-space:pre-wrap;word-break:break-word}
+  #toast{position:fixed;bottom:22px;left:50%;transform:translateX(-50%);background:var(--ink);color:var(--bg);
+    padding:9px 18px;border-radius:8px;font-size:13px;opacity:0;transition:opacity .2s;pointer-events:none;z-index:50}
+  #toast.show{opacity:1}
+  .load{padding:40px;text-align:center;color:var(--faint);font-size:13px}
+  @media (max-width:1100px){.cols3,.cols2{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="brand">Arrow Cape <span>· monitor</span></div>
+  <nav role="tablist">
+    <button role="tab" id="tab-c5" aria-selected="true">C5 Accounts</button>
+    <button role="tab" id="tab-c3" aria-selected="false">C3 Cargo &amp; Tonnage</button>
+    <button role="tab" id="tab-mx" aria-selected="false">Matches</button>
+    <button role="tab" id="tab-wa" aria-selected="false">WhatsApp</button>
+  </nav>
+  <span class="grow"></span>
+  <div class="ctl" id="ctl-c5">
+    <label class="k" for="d5from">From</label><input type="date" id="d5from">
+    <label class="k" for="d5to">To</label><input type="date" id="d5to">
+    <button class="btn" id="d5today">Today</button>
+  </div>
+  <div class="ctl" id="ctl-c3" hidden>
+    <label class="k" for="d3">As of</label><input type="date" id="d3">
+    <label class="k" for="winFrom">Window</label>
+    <input type="date" id="winFrom"><span class="sub">→</span><input type="date" id="winTo">
+    <button class="btn" id="winReset" title="Reset to the desk's index dates">↺</button>
+    <button class="btn primary" id="go">Run</button>
+  </div>
+  <button class="btn" id="refresh" title="Reload from WhatsApp / disk">Refresh</button>
+  <button class="btn" id="copy">Copy</button>
+  <button class="btn" id="download">Download</button>
+  <button class="btn primary" id="send">Send to WhatsApp</button>
+</header>
+
+<main>
+  <section id="v-c5">
+    <div class="bar"><h2>RIO · FMG · BHP</h2><span class="sub" id="meta5"></span></div>
+    <div class="cols3" id="board5"></div>
+
+    <div class="bar" style="margin-top:20px">
+      <h2>C5 Update — ready to send</h2>
+      <span class="sub" id="briefMeta"></span>
+      <button class="btn" id="briefCopy">Copy update</button>
+      <button class="btn" id="briefRun">Rebuild</button>
+    </div>
+    <div class="card"><pre class="rundown" id="brief">Press Rebuild to generate.</pre></div>
+  </section>
+
+  <section id="v-c3" hidden>
+    <div class="bar"><h2>C3 / WAFR position</h2><span class="sub" id="meta3"></span></div>
+    <div class="cols2">
+      <div class="card"><h3>Cargo <span class="pill" id="nCargo"></span></h3>
+        <div class="scroll"><table id="tCargo"></table></div></div>
+      <div class="card"><h3>Tonnage <span class="pill" id="nTon"></span></h3>
+        <div class="scroll"><table id="tTon"></table></div></div>
+    </div>
+  </section>
+
+  <section id="v-wa" hidden>
+    <div class="bar"><h2>Live WhatsApp</h2><span class="sub" id="waMeta">not connected</span></div>
+    <div class="card" id="waBanner" style="margin-bottom:14px">
+      <div class="wab"><span class="dot" id="waDot"></span><span id="waPhase">Not connected</span></div>
+      <ol class="steps" id="waSteps"></ol>
+    </div>
+    <div class="cols2">
+      <div class="card">
+        <h3>1 · Link the account</h3>
+        <div style="padding:16px">
+          <p class="sub" style="margin:0 0 12px;line-height:1.6">
+            <b style="color:var(--warn)">Quit the WhatsApp Desktop app and close web.whatsapp.com in every browser first.</b>
+            Only one WhatsApp Web session can be active per account — another client holding it is the #1 reason
+            connecting stalls or fails.<br><br>
+            On the phone: <b>WhatsApp → Settings → Linked Devices → Link a Device</b>, then scan.<br>
+            This grants the app access to every chat on that account, and the session is stored on this machine.
+          </p>
+          <button class="btn primary" id="waStart">Connect WhatsApp</button>
+          <button class="btn" id="waLogout" title="Disconnect, forget the login, and delete captured messages">Unlink &amp; clear</button>
+          <button class="btn" id="waReset" title="Kill any leftover browser and clear the session lock">Force reset</button>
+          <div id="waQr" style="margin-top:16px"></div>
+        </div>
+      </div>
+      <div class="card">
+        <h3>2 · Choose the groups</h3>
+        <div style="padding:16px">
+          <p class="sub" style="margin:0 0 12px;line-height:1.6">
+            Type the exact group names, or pick them once they appear. The list
+            fills in as messages arrive in each group.
+          </p>
+          <div class="ctl" style="margin-bottom:8px">
+            <label class="k" for="waC5" style="width:64px">C5 group</label>
+            <input id="waC5" style="flex:1;width:auto" placeholder="exact group name" list="waGroups">
+          </div>
+          <div class="ctl" style="margin-bottom:14px">
+            <label class="k" for="waC3" style="width:64px">C3 group</label>
+            <input id="waC3" style="flex:1;width:auto" placeholder="exact group name" list="waGroups">
+          </div>
+          <datalist id="waGroups"></datalist>
+          <div class="ctl" style="margin-bottom:14px">
+            <label class="k" for="waSince" style="width:64px">History from</label>
+            <input id="waSince" type="date" style="width:auto">
+            <span class="sub">blank = everything synced</span>
+          </div>
+          <button class="btn primary" id="waSave">Save groups &amp; pull history</button>
+          <button class="btn" id="waBackfill">Pull history</button>
+          <button class="btn" id="waRefresh">Refresh list</button>
+
+          <div style="margin-top:18px;padding-top:14px;border-top:1px solid var(--line)">
+            <h4 style="margin:0 0 6px;font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--dim)">
+              History — chat export</h4>
+            <p class="sub" style="margin:0 0 10px;line-height:1.6">
+              WhatsApp Web blocks reading old messages programmatically, so full history
+              comes from WhatsApp's own export:<br>
+              <b>Open the group → ⋮ → More → Export chat → Without media</b>, then load the
+              <code>.txt</code> here. Uses the <i>History from</i> date above.
+            </p>
+            <div class="ctl" style="margin-bottom:8px">
+              <label class="k" for="waFileC5" style="width:64px">C5 export</label>
+              <input type="file" id="waFileC5" accept=".txt,text/plain" style="width:auto;border:0;flex:1">
+            </div>
+            <div class="ctl">
+              <label class="k" for="waFileC3" style="width:64px">C3 export</label>
+              <input type="file" id="waFileC3" accept=".txt,text/plain" style="width:auto;border:0;flex:1">
+            </div>
+          </div>
+          <pre class="body" id="waLog" style="margin-top:14px;color:var(--dim)"></pre>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="v-mx" hidden>
+    <div class="bar"><h2>Cargo → vessel matches</h2><span class="sub" id="metaM"></span></div>
+    <div class="card" id="matches"></div>
+  </section>
+</main>
+
+<div id="toast"></div>
+<div id="pop" hidden><div class="ph"></div><pre></pre><div class="hint">double-click the row to pin it open</div></div>
+
+<script>
+const $ = (s) => document.querySelector(s);
+const ACCTS = ["RIO","FMG","BHP"];
+let c5 = null, c3 = null, view = "c5";
+
+const toast = (m) => { const t=$("#toast"); t.textContent=m; t.classList.add("show"); setTimeout(()=>t.classList.remove("show"),2600); };
+const el = (tag, cls, txt) => { const e=document.createElement(tag); if(cls)e.className=cls; if(txt!=null)e.textContent=txt; return e; };
+const money = (n) => typeof n === "number" ? "$"+n.toFixed(2) : null;
+
+// Trim only trailing corporate suffix WORDS. Matching "co" anywhere turned
+// Glencore into "Glen" and Cosco into "Cos".
+const SUFFIX = new Set(["co","co.","company","ltd","ltd.","limited","inc","inc.","corp","corp.",
+  "corporation","development","pte","plc","sa","s.a.","group","holdings","llc","gmbh","&"]);
+function shortName(raw){
+  if(!raw) return "?";
+  const w=String(raw).replace(/,/g," ").split(/\s+/).filter(Boolean);
+  while(w.length>1 && SUFFIX.has(w[w.length-1].toLowerCase().replace(/[.,]+$/,"")+(w[w.length-1].endsWith(".")?".":""))) w.pop();
+  while(w.length>1 && SUFFIX.has(w[w.length-1].toLowerCase())) w.pop();
+  return w.join(" ");
+}
+
+/* ---------------- view switching ---------------- */
+function show(v){
+  view=v;
+  for (const [k,tab,sec] of [["c5","#tab-c5","#v-c5"],["c3","#tab-c3","#v-c3"],["mx","#tab-mx","#v-mx"],["wa","#tab-wa","#v-wa"]]){
+    $(tab).setAttribute("aria-selected", String(k===v));
+    $(sec).hidden = k!==v;
+  }
+  $("#ctl-c5").hidden = v!=="c5";
+  $("#ctl-c3").hidden = v!=="c3" && v!=="mx";
+  if ((v==="c3"||v==="mx") && !c3) loadC3();
+  if (v==="wa") fetch("/api/wa/status").then(r=>r.json()).then(waRender).catch(()=>{});
+}
+$("#tab-c5").onclick=()=>show("c5"); $("#tab-c3").onclick=()=>show("c3");
+$("#tab-mx").onclick=()=>show("mx"); $("#tab-wa").onclick=()=>show("wa");
+
+/* ---------------- live WhatsApp ---------------- */
+let waTimer=null;
+const waLog=(m)=>{ $("#waLog").textContent = m + "\n" + $("#waLog").textContent; };
+
+function waRender(st){
+  const meta=$("#waMeta");
+  meta.textContent = st.connected
+    ? `LIVE as ${st.me||"?"} · ${st.captured} new since connect${st.lastMessageAt?" · last "+new Date(st.lastMessageAt).toLocaleTimeString():""}`
+    : st.status==="ready" ? `linked as ${st.me||"?"} — ${st.syncing?"pulling history…":"not yet syncing"}`
+    : st.status + (st.startingFor?` (${st.startingFor}s)`:"") + (st.error?` — ${st.error}`:"");
+
+  // Phase banner + step log: the user asked to see what WhatsApp is doing.
+  $("#waPhase").textContent = st.phase || st.status;
+  const dot=$("#waDot"); dot.className="dot "+(st.connected?"ok":st.status==="error"?"bad":st.status==="idle"?"":"busy");
+  const ol=$("#waSteps"); ol.innerHTML="";
+  for(const x of (st.steps||[])){
+    const li=el("li",x.level||"");
+    li.append(el("time",null,new Date(x.t).toLocaleTimeString()), el("span",null,x.text+(x.count>1?`  (×${x.count})`:"")));
+    ol.appendChild(li);
+  }
+  ol.scrollTop=ol.scrollHeight;
+
+  // Connect is disabled while anything is in flight or already linked.
+  const busy=["starting","qr","authenticated","ready"].includes(st.status);
+  const cb=$("#waStart"); cb.disabled=busy;
+  cb.textContent = st.connected?"Connected ✓":st.status==="ready"?"Linked":busy?"Connecting…":"Connect WhatsApp";
+  $("#waBackfill").disabled = st.status!=="ready" || st.syncing;
+  $("#waSave").disabled = st.syncing;
+
+  const qr=$("#waQr");
+  if(st.qr){ qr.innerHTML=""; const i=new Image(); i.src=st.qr; i.width=280;
+    i.style.cssText="border-radius:8px;background:#fff;padding:10px"; qr.appendChild(i);
+    const age=st.qrAge==null?"":` · ${st.qrAge}s old`;
+    qr.appendChild(el("div","sub",`Scan now${age} — the code rotates every ~20s, an old one fails to link`)); }
+  else if(st.status==="ready"){ qr.innerHTML='<span class="sub">Linked ✓</span>'; }
+  else qr.innerHTML="";
+
+  // Suggestions come from whatever groups have been seen so far; the fields stay
+  // free-text because this WhatsApp Web build blocks enumerating the chat list.
+  const dl=$("#waGroups");
+  if(dl.dataset.n!==String(st.groups.length)){
+    dl.innerHTML="";
+    for(const g of st.groups){ const o=el("option"); o.value=g.name; dl.appendChild(o); }
+    dl.dataset.n=String(st.groups.length);
+  }
+  if(st.watching.since && document.activeElement!==$("#waSince")) $("#waSince").value=st.watching.since;
+  for(const [id,key] of [["#waC5","c5"],["#waC3","c3"]]){
+    const inp=$(id);
+    if(document.activeElement===inp) continue;
+    // Only ever fill FROM the server. Clearing here would wipe what the user is
+    // typing on the next 2.5s poll, before Save could read it -- unlink clears
+    // the fields explicitly instead.
+    if(st.watching[key]) inp.value=st.watching[key];
+  }
+
+  // Captured messages stay on disk after unlinking; say so rather than showing
+  // counts that look like a live connection.
+  const s5=st.stores.c5, s3=st.stores.c3;
+  if(st.status!=="ready" && (s5||s3)){
+    $("#waLog").textContent =
+      (s5?`C5 store: ${s5.count} msgs saved (${s5.first||"-"} .. ${s5.last||"-"})\n`:"")+
+      (s3?`C3 store: ${s3.count} msgs saved (${s3.first||"-"} .. ${s3.last||"-"})\n`:"")+
+      "not connected — saved messages are kept\n";
+  } else if(s5||s3){
+    $("#waLog").textContent =
+      (s5?`C5 store: ${s5.count} msgs, ${s5.days} days (${s5.first||"-"} .. ${s5.last||"-"})\n`:"")+
+      (s3?`C3 store: ${s3.count} msgs, ${s3.days} days (${s3.first||"-"} .. ${s3.last||"-"})\n`:"");
+  }
+}
+
+// One global poll. Renders the WhatsApp tab when it is showing, and on ANY tab
+// detects a change in the live store (history pulled, new message captured,
+// unlink) and refreshes what is on screen -- the stale-data complaint.
+let lastSig=null;
+function storeSig(st){ return JSON.stringify([st.connected, st.stores, st.watching, st.status==="idle"]); }
+async function sourceChanged(){
+  // Source may have flipped between sample and live: date bounds change too.
+  await initDates();
+  c3=null; brief=null;
+  if(view==="c5") await loadC5();
+  else if(view==="c3"||view==="mx") await loadC3();
+}
+async function waPoll(){
+  clearInterval(waTimer);
+  const tick=async()=>{
+    try{
+      const st=await (await fetch("/api/wa/status")).json();
+      if(view==="wa") waRender(st);
+      const sig=storeSig(st);
+      if(lastSig!==null && sig!==lastSig){ await sourceChanged(); if(view!=="wa") toast("Data updated from WhatsApp"); }
+      lastSig=sig;
+    }catch{}
+  };
+  await tick();
+  waTimer=setInterval(tick, 3000);
+}
+
+$("#waStart").onclick=async(e)=>{ e.target.disabled=true; try{ waRender(await (await fetch("/api/wa/start",{method:"POST"})).json()); toast("Starting — QR shortly"); } finally { setTimeout(()=>e.target.disabled=false,4000); } };
+$("#waReset").onclick=async(e)=>{
+  e.target.disabled=true;
+  try{ waRender(await (await fetch("/api/wa/reset",{method:"POST"})).json()); toast("Session reset — press Connect"); }
+  finally{ e.target.disabled=false; }
+};
+$("#waLogout").onclick=async(e)=>{
+  e.target.disabled=true;
+  try{
+    const st=await (await fetch("/api/wa/logout",{method:"POST"})).json();
+    // Clear the view too, or the old group list lingers after unlinking.
+    $("#waGroups").innerHTML=""; $("#waGroups").dataset.n="";
+    $("#waQr").innerHTML=""; $("#waLog").textContent="";
+    $("#waC5").value=""; $("#waC3").value=""; $("#waSince").value="";
+    waRender(st);
+    const n = st.cleared ? st.cleared.messages : 0;
+    toast(`Unlinked${n?` — ${n} captured messages deleted`:""}`);
+    // The C5/C3 views are now stale; force them to reload from history only.
+    c5=null; c3=null;
+    if($("#d5from").value) await loadC5();
+  } finally { e.target.disabled=false; }
+};
+$("#waRefresh").onclick=async(e)=>{
+  e.target.disabled=true;
+  try{ const st=await (await fetch("/api/wa/groups",{method:"POST"})).json();
+    waRender(st); toast(`${st.groups?.length||0} groups found`); }
+  finally{ e.target.disabled=false; }
+};
+// One import handler, wired to the C5 and C3 file inputs separately so there is
+// no dropdown to set wrongly.
+async function importExportFile(which, input){
+  const f=input.files[0]; if(!f) return;
+  const group=(which==="c5"?$("#waC5").value:$("#waC3").value).trim();
+  if(!group){ toast(`Set the ${which.toUpperCase()} group name first`); input.value=""; return; }
+  waLog(`${which.toUpperCase()}: reading ${f.name} (${(f.size/1e6).toFixed(1)} MB) …`);
+  try{
+    const text=await f.text();
+    const since=$("#waSince").value||undefined;
+    const r=await (await fetch("/api/wa/import",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({group,text,since})})).json();
+    if(r.error){ waLog(`  ${r.error}`); toast("Import failed"); }
+    else{
+      waLog(`  → ${group}: parsed ${r.parsed}, kept ${r.kept}${since?" from "+since:""}, added ${r.added}`);
+      toast(`${which.toUpperCase()}: imported ${r.added} messages`);
+    }
+  }catch(err){ waLog(`  failed: ${err.message}`); }
+  finally{ input.value=""; }
+}
+$("#waFileC5").onchange=(e)=>importExportFile("c5",e.target);
+$("#waFileC3").onchange=(e)=>importExportFile("c3",e.target);
+$("#waSave").onclick=async()=>{
+  const body={c5:$("#waC5").value.trim(),c3:$("#waC3").value.trim(),since:$("#waSince").value||""};
+  if(!body.c5&&!body.c3) return toast("Type at least one group name");
+  const st=await (await fetch("/api/wa/watch",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)})).json();
+  waRender(st);
+  toast(st.status==="ready"?"Saved — pulling history now":"Saved — will pull history once linked");
+  sourceChanged();
+};
+$("#waBackfill").onclick=async(e)=>{
+  e.target.disabled=true;
+  try{
+    // Save first so the since-date and names are what get pulled.
+    const body={c5:$("#waC5").value.trim(),c3:$("#waC3").value.trim(),since:$("#waSince").value||""};
+    await fetch("/api/wa/watch",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
+    const st=await (await fetch("/api/wa/sync",{method:"POST"})).json();
+    waRender(st);
+    toast(st.connected?"History pulled — live":"Some groups failed — see the log");
+    sourceChanged();
+  } finally { e.target.disabled=false; }
+};
+
+/* ---------------- C5 ---------------- */
+function renderC5(d){
+  if(!d || d.error || !d.rows || !d.rows.length){
+    const span = d && d.from ? `${d.from} → ${d.to}` : "that range";
+    $("#meta5").textContent = d && d.error ? d.error : `no messages in ${span}`;
+    $("#board5").innerHTML = "";
+    $("#board5").appendChild(el("div","empty", d && d.error ? d.error : "Nothing to show — try another date."));
+    return;
+  }
+  c5=d;
+  const multiDay = Boolean(d.from && d.to && d.from!==d.to);
+  $("#meta5").textContent =
+    `${d.date} · ${d.messagesScanned} messages${d.dayCount>1?" over "+d.dayCount+" days":""}${/^00:00–24:00/.test(d.window||"")?"":" · "+d.window} · ${d.source || ""}`
+    + (d.capped?`  (capped at ${d.capped} days)`:"");
+  const board=$("#board5"); board.innerHTML="";
+  for (const a of ACCTS){
+    const direct=d.rows.filter(r=>r.account===a&&r.relation==="direct")
+      .sort((x,y)=> x.date===y.date ? x.time.localeCompare(y.time) : x.date.localeCompare(y.date));
+    const indirect=d.rows.filter(r=>r.account===a&&r.relation==="indirect");
+    const card=el("div","card"); card.dataset.a=a;
+    const h=el("h3",null,a);
+    const pill=el("span","pill",String(direct.length));
+    if(indirect.length) pill.title=`${indirect.length} passing mention(s) set aside as noise`;
+    h.appendChild(pill);
+    card.appendChild(h);
+    if(!direct.length) card.appendChild(el("div","empty","No activity"));
+    let lastDate=null;
+    for(const r of direct){
+      // In range mode, break the column up by day.
+      if(multiDay && r.date!==lastDate){ lastDate=r.date; card.appendChild(el("div","daysep",r.date)); }
+      const u=el("div","upd"), top=el("div","updtop");
+      top.append(el("span","t",r.time), el("span","who",r.sender));
+      if(r.source==="context"){ const g=el("span","tag","follow-up");
+        g.title="No account named — inherited from this broker's previous message"; top.appendChild(g); }
+      const useSummary = r.summary && r.summaryVerified;
+      const pre = el("pre","body", useSummary ? r.summary : r.update);
+      if (useSummary) {
+        pre.title = "Click to show the original message";
+        pre.style.cursor = "pointer";
+        let raw = false;
+        pre.onclick = () => { raw = !raw; pre.textContent = raw ? r.update : r.summary; pre.style.opacity = raw ? ".7" : "1"; };
+      } else if (r.summary) {
+        const t = el("span","tag","verbatim");
+        t.title = "Summary failed number/verb verification — showing the original";
+        top.appendChild(t);
+      }
+      u.append(top, pre); card.appendChild(u);
+    }
+    // Passing mentions ("Rio only", "BHP shipper") are noise per the owner. They stay
+    // classified so they can never count as account activity, but are not shown.
+    board.appendChild(card);
+  }
+}
+
+/* ---------------- C3 tables ---------------- */
+// Just the number. The bid/bidding labels under every rate were noise.
+function rateCell(o){
+  const td=el("td","rt");
+  if(typeof o.rate!=="number"){ td.className="rt muted"; td.textContent="idea TBC"; return td; }
+  let t=money(o.rate); if(typeof o.rate_high==="number") t+="–"+o.rate_high.toFixed(2);
+  td.textContent=t;
+  return td;
+}
+
+// Hover shows the original WhatsApp message in a styled popover; double-click
+// pins it open under the row.
+function showPop(ev,when,who,body){
+  const pop=$("#pop");
+  pop.hidden=false;
+  pop.querySelector(".ph").innerHTML="";
+  pop.querySelector(".ph").append(el("b",null,when), el("span",null,who||""));
+  pop.querySelector("pre").textContent=body;
+  // Keep it on screen near the cursor.
+  const pad=14, w=pop.offsetWidth||420, h=pop.offsetHeight||160;
+  let x=ev.clientX+pad, y=ev.clientY+pad;
+  if(x+w>innerWidth-8) x=Math.max(8,ev.clientX-w-pad);
+  if(y+h>innerHeight-8) y=Math.max(8,ev.clientY-h-pad);
+  pop.style.left=x+"px"; pop.style.top=y+"px";
+  requestAnimationFrame(()=>pop.classList.add("show"));
+}
+function hidePop(){ const p=$("#pop"); p.classList.remove("show"); setTimeout(()=>{p.hidden=true;},140); }
+
+function attachOriginal(tr,rec){
+  if(!rec.raw) return;
+  const when=[rec.date,rec.time].filter(Boolean).join(" ");
+  const who=String(rec.sender||"").replace(/\s+ARROW.*$/i,"");
+  tr.onmouseenter=(e)=>showPop(e,when,who,rec.raw);
+  tr.onmousemove=(e)=>{ if(!$("#pop").hidden) showPop(e,when,who,rec.raw); };
+  tr.onmouseleave=hidePop;
+  tr.ondblclick=(e)=>{
+    e.stopPropagation();
+    hidePop();
+    const open=tr.nextElementSibling&&tr.nextElementSibling.classList.contains("origrow");
+    tr.parentElement.querySelectorAll("tr.origrow").forEach(x=>x.remove());
+    if(open) return;
+    const r=el("tr","origrow");
+    const td=el("td"); td.colSpan=tr.children.length;
+    td.appendChild(el("div","sub",`${when} · ${who}`));
+    td.appendChild(el("pre","body",rec.raw));
+    r.appendChild(td); tr.after(r);
+  };
+}
+function table(host, cols, rows, build, onPick){
+  host.innerHTML="";
+  const thead=el("thead"), tr=el("tr");
+  cols.forEach(c=>tr.appendChild(el("th",null,c))); thead.appendChild(tr); host.appendChild(thead);
+  const tb=el("tbody");
+  rows.forEach((r,i)=>{ const t=build(r); t.dataset.i=i;
+    t.onclick=()=>{ [...tb.children].forEach(x=>x.removeAttribute("aria-selected"));
+      t.setAttribute("aria-selected","true"); onPick&&onPick(r); };
+    tb.appendChild(t); });
+  host.appendChild(tb);
+}
+function renderC3(d){
+  c3=d;
+  $("#meta3").textContent=`as of ${d.asOf} · chat ${d.span.join(", ")} · ballaster list ${d.ballasterDate||"n/a"}${d.windowText?" · window "+d.windowText:""}`;
+  $("#metaM").textContent=$("#meta3").textContent;
+  $("#nCargo").textContent=d.cargo.length; $("#nTon").textContent=d.tonnage.length;
+  if(!d.cargo.length && !d.tonnage.length){
+    $("#meta3").textContent += " · no cargo or tonnage found in this group for these days";
+  }
+
+  table($("#tCargo"), ["Charterer","Route","Basin","Laycan","Qty","Rate","Time"], d.cargo, c=>{
+    const tr=el("tr");
+    tr.append(
+      el("td","nm",shortName(c.charterer)),
+      el("td",null,c.route_detail||"—"),
+      el("td","muted",c.route==="PDM/RDAM"?"PDM/Rdam":c.route),
+      el("td","num",c.laycan||"—"),
+      el("td","num",c.qty||"—"),
+      rateCell(c),
+      el("td","num muted",c.time||"—")
+    );
+    attachOriginal(tr,c);
+    return tr;
+  }, cargo=>{ show("mx"); highlightCargo(cargo); });
+
+  table($("#tTon"), ["Vessel","Owner","ETA","Rate","Time"], d.tonnage, t=>{
+    const tr=el("tr");
+    const v=el("td","nm",(t.vessel||"TBN")+(t.size&&t.year?` ${t.size}/${t.year}`:""));
+    const f=[]; if(t.flags&&t.flags.scrubber)f.push("scrubber"); if(t.flags&&t.flags.bs)f.push("B/S");
+    if(f.length){ const d2=el("div"); f.forEach(x=>d2.appendChild(el("span","chip",x))); v.appendChild(d2); }
+    tr.append(v, el("td","muted",t.owner||"—"),
+      el("td","num",t.eta?`${t.eta_region==="WAF"?"WAF":"Tub"} ${t.eta}`:"—"),
+      rateCell(t), el("td","num muted",t.time||"—"));
+    attachOriginal(tr,t);
+    return tr;
+  });
+
+  renderMatches(d.matches||[]);
+}
+
+/* ---------------- matches ---------------- */
+// Matches as a copy-pasteable block per cargo: no score, one reason per ship,
+// and a Copy button that yields WhatsApp-ready text for that cargo.
+function matchText(m){
+  const c=m.cargo;
+  const head=[shortName(c.charterer).toUpperCase(),
+    c.route_detail||c.route, c.laycan, c.qty,
+    typeof c.rate==="number"?`bid ${money(c.rate)}`:null].filter(Boolean).join(" — ");
+  const lines=m.candidates.map(x=>{
+    const v=(x.vessel.vessel||"TBN")+(x.vessel.size?` ${x.vessel.size}/${x.vessel.year||"??"}`:"");
+    const bits=[x.vessel.owner, x.vessel.eta?`ETA ${x.vessel.eta}`:null,
+      x.offer!==null?money(x.offer):"idea TBC",
+      x.gap!==null?`gap ${money(x.gap)}`:null].filter(Boolean).join(" · ");
+    return `• ${v} — ${bits}`;
+  });
+  return `*${head}*\n${lines.join("\n")}`;
+}
+
+function renderMatches(ms){
+  const host=$("#matches"); host.innerHTML="";
+  const live=ms.filter(m=>m.candidates.length);
+  if(!live.length){ host.appendChild(el("div","empty","No matches above threshold.")); return; }
+
+  for(const m of live){
+    const c=m.cargo;
+    const row=el("div","mrow");
+    row.id="m-"+encodeURIComponent(String(c.charterer||"")+c.route);
+
+    const h=el("div","mhead");
+    h.append(el("span","nm",shortName(c.charterer).toUpperCase()));
+    h.append(el("span","sub",[c.route_detail||c.route,c.laycan,c.qty].filter(Boolean).join("  ·  ")));
+    if(typeof c.rate==="number") h.append(el("span","rt",`bid ${money(c.rate)}`));
+    const btn=el("button","btn","Copy");
+    btn.style.marginLeft="auto";
+    btn.onclick=async(e)=>{ e.stopPropagation(); await navigator.clipboard.writeText(matchText(m)); toast("Copied"); };
+    h.appendChild(btn);
+    row.appendChild(h);
+
+    const cands=el("div","cands");
+    for(const x of m.candidates){
+      const box=el("div","cand1");
+      const v=(x.vessel.vessel||"TBN")+(x.vessel.size?` ${x.vessel.size}/${x.vessel.year||"??"}`:"");
+      const title=el("div","vsl",v);
+      title.appendChild(el("span","sub","  "+[x.vessel.owner,
+        x.vessel.eta?`ETA ${x.vessel.eta}`:null,
+        x.offer!==null?money(x.offer):"idea TBC",
+        x.gap!==null?`gap ${money(x.gap)}`:null].filter(Boolean).join("  ·  ")));
+      box.appendChild(title);
+      // Only the first reason -- the rest was noise.
+      if(x.reasons.length) box.appendChild(el("div","why1",x.reasons[0]));
+      if(x.vessel.raw){
+        const when=[x.vessel.date,x.vessel.time].filter(Boolean).join(" ");
+        const who=String(x.vessel.sender||"").replace(/\s+ARROW.*$/i,"");
+        box.onmouseenter=(e)=>showPop(e,when,who,x.vessel.raw);
+        box.onmousemove=(e)=>{ if(!$("#pop").hidden) showPop(e,when,who,x.vessel.raw); };
+        box.onmouseleave=hidePop;
+      }
+      cands.appendChild(box);
+    }
+    row.appendChild(cands);
+    host.appendChild(row);
+  }
+}
+
+function highlightCargo(cargo){
+  const id="m-"+encodeURIComponent(String(cargo.charterer||"")+cargo.route);
+  const t=document.getElementById(id);
+  if(t){ t.scrollIntoView({behavior:"smooth",block:"center"}); t.style.outline="2px solid var(--accent)";
+    setTimeout(()=>t.style.outline="",1600); }
+  else toast("No candidates for that cargo");
+}
+
+/* ---------------- loading ---------------- */
+async function loadC5(){
+  const from=$("#d5from").value, to=$("#d5to").value;
+  if(!from||!to) return;
+  // Always the range endpoint: a calendar lets you pick a day with no traffic,
+  // and the range form filters those out instead of erroring.
+  $("#meta5").textContent="loading…";
+  brief=null; $("#brief").textContent="Press Rebuild to generate."; $("#briefMeta").textContent="";
+  renderC5(await (await fetch(`/api/digest?from=${from}&to=${to}`)).json());
+}
+async function loadC3(){
+  const host=$("#matches"); host.innerHTML="";
+  host.appendChild(el("div","load","Extracting… first run for a day is rate-limited and can take a few minutes."));
+  $("#meta3").textContent="loading… (first run for a new group extracts with the model and can take a few minutes)";
+  const p=new URLSearchParams();
+  if($("#d3").value) p.set("date",$("#d3").value);
+  if($("#winFrom").value && $("#winTo").value){
+    p.set("windowFrom",$("#winFrom").value);
+    p.set("windowTo",$("#winTo").value);
+  }
+  try{
+    const r=await fetch("/api/c3?"+p.toString());
+    const d=await r.json();
+    if(d.error){ $("#meta3").textContent="Failed: "+d.error; host.innerHTML=""; return; }
+    renderC3(d);
+  }catch(e){ $("#meta3").textContent="Failed: "+e.message; }
+}
+// Everything on the C3 bar comes from the data: the day range, which days are
+// already extracted, and the window the desk itself is quoting.
+let c3Meta=null;
+async function initC3Controls(asOf){
+  const q = asOf ? `?date=${asOf}` : "";
+  c3Meta = await (await fetch("/api/c3/meta"+q)).json();
+  const d3=$("#d3");
+  // As-of can be any day up to today; default to the latest day with data.
+  d3.min=c3Meta.first; d3.max=todayDubai();
+  if(!d3.value || d3.value>d3.max || d3.value<d3.min) d3.value = c3Meta.cached.length ? c3Meta.cached[c3Meta.cached.length-1] : c3Meta.last;
+  applySuggestedWindow();
+  markReady();
+}
+function applySuggestedWindow(){
+  if(!c3Meta || !c3Meta.suggested) return;
+  $("#winFrom").value=c3Meta.suggested.from;
+  $("#winTo").value=c3Meta.suggested.to;
+  $("#winReset").title=`Desk index dates: ${c3Meta.suggested.text}`;
+}
+function markReady(){
+  if(!c3Meta) return;
+  const warm=c3Meta.cached.includes($("#d3").value);
+  $("#d3").style.borderColor = warm ? "var(--good)" : "var(--line)";
+  $("#d3").title = warm ? "Already extracted — loads instantly"
+                        : "Not extracted yet — first run takes a few minutes";
+}
+$("#d3").onchange=async()=>{ await initC3Controls($("#d3").value); };
+$("#winReset").onclick=()=>{ applySuggestedWindow(); };
+$("#go").onclick=loadC3;
+// Dubai "today": the To picker always defaults to it and cannot exceed it.
+function todayDubai(){
+  const p=new Intl.DateTimeFormat("en-CA",{timeZone:"Asia/Dubai",year:"numeric",month:"2-digit",day:"2-digit"}).formatToParts(new Date());
+  const g=(t)=>p.find(x=>x.type===t).value; return `${g("year")}-${g("month")}-${g("day")}`;
+}
+async function initDates(){
+  const {dates}=await (await fetch("/api/dates")).json();
+  const today=todayDubai();
+  const first=dates[0]||today;
+  const latestWithData=[...dates].filter(d=>d<=today).pop()||today;
+  for(const sel of [$("#d5from"),$("#d5to")]){ sel.min=first; sel.max=today; }
+  // To is always today; From is the most recent day that has data so the first
+  // view is never blank.
+  $("#d5to").value=today;
+  $("#d5from").value=latestWithData;
+  $("#d5today").textContent="Today";
+  $("#d5today").title=`From = ${latestWithData} (latest with data), To = ${today}`;
+}
+
+// Keep the range sane: From must not be after To.
+$("#d5from").onchange=()=>{ if($("#d5from").value>$("#d5to").value) $("#d5to").value=$("#d5from").value; loadC5(); };
+$("#d5to").onchange=()=>{ if($("#d5to").value<$("#d5from").value) $("#d5from").value=$("#d5to").value; loadC5(); };
+$("#d5today").onclick=()=>{ const t=todayDubai(); $("#d5from").value=t; $("#d5to").value=t; loadC5(); };
+
+// the owner: "any UI I can extract from should be fine" — so the current view is
+// downloadable as CSV (rows) plus the WhatsApp-ready text.
+function saveFile(name, text, type){
+  const url=URL.createObjectURL(new Blob([text],{type}));
+  const a=document.createElement("a");
+  a.href=url; a.download=name; document.body.appendChild(a); a.click();
+  a.remove(); setTimeout(()=>URL.revokeObjectURL(url),1000);
+}
+function toCsv(rows, cols){
+  const esc=(v)=>`"${String(v==null?"":v).replace(/"/g,'""')}"`;
+  return [cols.join(","), ...rows.map(r=>cols.map(c=>esc(r[c])).join(","))].join("\n");
+}
+$("#download").onclick=()=>{
+  if(view==="c5"){
+    if(!c5||!c5.rows) return toast("Nothing to download");
+    const span = c5.from && c5.from!==c5.to ? `${c5.from}_${c5.to}` : (c5.from||c5.date);
+    saveFile(`c5-accounts-${span}.csv`,
+      toCsv(c5.rows,["account","date","time","sender","relation","source","summary","update"]),"text/csv");
+    saveFile(`c5-accounts-${span}.txt`, (brief && brief.text) || c5.text, "text/plain");
+    toast("Downloaded CSV + text");
+    return;
+  }
+  if(!c3) return toast("Run the rundown first");
+  const tag=`${c3.asOf}`;
+  saveFile(`c3-cargo-${tag}.csv`,
+    toCsv(c3.cargo,["charterer","route","route_detail","laycan","qty","rate","rate_high","indication","status"]),"text/csv");
+  saveFile(`c3-tonnage-${tag}.csv`,
+    toCsv(c3.tonnage,["vessel","size","year","owner","eta","eta_region","rate","rate_high","indication"]),"text/csv");
+  toast("Downloaded cargo + tonnage CSV");
+};
+// The C5 copy-paste block. Generated on demand -- it costs a model call.
+let brief=null;
+async function loadBrief(){
+  const from=$("#d5from").value, to=$("#d5to").value;
+  if(!from||!to) return;
+  $("#brief").textContent="Building…";
+  $("#briefMeta").textContent="";
+  try{
+    const r=await (await fetch(`/api/digest/brief?from=${from}&to=${to}`)).json();
+    if(r.error){ $("#brief").textContent="Failed: "+r.error; return; }
+    brief=r;
+    $("#brief").textContent=r.text;
+    const unver=r.blocks.filter(b=>!b.quiet&&!b.verified).length;
+    $("#briefMeta").textContent = unver
+      ? `${unver} account(s) shown verbatim — summary failed verification`
+      : "all figures verified against the original messages";
+  }catch(e){ $("#brief").textContent="Failed: "+e.message; }
+}
+$("#briefRun").onclick=loadBrief;
+$("#briefCopy").onclick=async()=>{
+  if(!brief) return toast("Press Rebuild first");
+  await navigator.clipboard.writeText(brief.text); toast("C5 update copied");
+};
+
+// Reload whatever is on screen — after connecting WhatsApp or a backfill the
+// views are stale until something re-fetches.
+$("#refresh").onclick=async(e)=>{
+  e.target.disabled=true;
+  try{
+    if(view==="c5"){ await loadC5(); if(brief) await loadBrief(); }
+    else if(view==="c3"||view==="mx"){ c3=null; await loadC3(); }
+    else { await waPoll(); }
+    toast("Refreshed");
+  } finally { e.target.disabled=false; }
+};
+
+$("#copy").onclick=async()=>{
+  const t = view==="c5" ? ((brief&&brief.text)||(c5&&c5.text)) : (c3&&c3.text);
+  if(!t) return toast("Nothing to copy");
+  await navigator.clipboard.writeText(t); toast("Copied");
+};
+$("#send").onclick=async(e)=>{
+  const t = view==="c5" ? (c5&&c5.text) : (c3&&c3.text);
+  if(!t) return toast("Nothing to send");
+  e.target.disabled=true;
+  try{
+    const r=await fetch("/api/send",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({date:c5&&c5.date,text:t})});
+    const o=await r.json();
+    toast(o.ok?"Sent to WhatsApp":"Failed: "+o.error);
+  }finally{ e.target.disabled=false; }
+};
+
+(async()=>{
+  await initDates();
+  await loadC5();
+  waPoll();
+
+  await initC3Controls();
+})();
+</script>
+</body>
+</html>
