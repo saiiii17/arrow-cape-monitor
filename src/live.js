@@ -285,8 +285,10 @@ function start({ fresh = false } = {}) {
         ...(process.platform === "linux"
           ? [
               "--disable-gpu",
-              "--no-zygote",
-              "--single-process",          // one renderer: far less RAM
+              // --no-zygote/--single-process cut memory but can destabilise
+              // Chromium. Set WA_NO_SINGLE_PROCESS=1 to A/B this on the host
+              // without a code change.
+              ...(process.env.WA_NO_SINGLE_PROCESS === "1" ? [] : ["--no-zygote", "--single-process"]),          // one renderer: far less RAM
               "--disable-extensions",
               "--disable-background-networking",
               "--disable-default-apps",
@@ -305,10 +307,26 @@ function start({ fresh = false } = {}) {
     if (state.status !== "qr") step("Waiting for QR scan — phone → Linked Devices → Link a Device");
     state.status = "qr";
     state.qrDataUrl = await QR.toDataURL(qr, { margin: 1, width: 320 });
-    // WhatsApp rotates the code roughly every 20s; a scan of an expired one
-    // fails with "couldn't link device", so the age is shown in the UI.
-    state.qrAt = Date.now();
+    // WhatsApp decides the rotation interval, not us. Measure it from the
+    // actual qr events rather than guessing a number in the UI.
+    const now = Date.now();
+    if (state.qrAt) {
+      state.qrIntervals = [...(state.qrIntervals || []), Math.round((now - state.qrAt) / 1000)].slice(-5);
+    }
+    state.qrAt = now;
     state.qrCount = (state.qrCount || 0) + 1;
+
+    // WhatsApp refreshes the code about every 20s. If it stops (the page is
+    // CPU-starved on a small container), the displayed QR goes stale and will
+    // not link. Relaunch to get a live one rather than showing a dead code.
+    clearTimeout(state.qrStaleTimer);
+    state.qrStaleTimer = setTimeout(() => {
+      if (state.status !== "qr") return;
+      const age = Math.round((Date.now() - state.qrAt) / 1000);
+      step(`QR stopped refreshing (${age}s old) — restarting to get a live code`, "warn");
+      hardStop();
+      setTimeout(() => start({ fresh: false }), 1500);
+    }, Number(process.env.QR_STALE_MS || 60_000));
   });
 
   client.on("authenticated", () => {
@@ -457,6 +475,10 @@ function start({ fresh = false } = {}) {
       if (!proc) return;
       const mem = containerMemory();
       console.log(`  [wa] chromium pid=${proc.pid}${mem ? ` mem=${mem.used}/${mem.limit}` : ""}`);
+      if (process.env.WA_DEBUG === "1") {
+        proc.stdout?.on("data", (d) => console.log("  [chrome]", String(d).trimEnd().slice(0, 300)));
+        proc.stderr?.on("data", (d) => console.error("  [chrome!]", String(d).trimEnd().slice(0, 300)));
+      }
       proc.on("exit", (code, signal) => {
         const m = containerMemory();
         const oom = m && m.oomKill !== "0" ? ` (cgroup oom_kill=${m.oomKill} — out of memory)` : "";
@@ -665,6 +687,10 @@ function snapshot() {
     me: state.me,
     qr: state.qrDataUrl,
     qrAge: state.qrAt && state.status === "qr" ? Math.round((Date.now() - state.qrAt) / 1000) : null,
+    // Median of the observed gaps between QR refreshes, once we have any.
+    qrRotateSecs: (state.qrIntervals || []).length
+      ? [...state.qrIntervals].sort((a, b) => a - b)[Math.floor(state.qrIntervals.length / 2)]
+      : null,
     groups: state.groups,
     watching: state.watching,
     claimedSession: Boolean(state.claimedSession),
@@ -688,6 +714,7 @@ function hardStop() {
   const c = client;
   client = null;
   clearTimeout(state.startTimer);
+  clearTimeout(state.qrStaleTimer);
   clearInterval(state.claimTimer);
   clearInterval(state.authWatchdog);
   if (!c) return;

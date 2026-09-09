@@ -304,6 +304,10 @@ process.on("unhandledRejection", (err) => {
   console.error("Unhandled rejection:", err);
 });
 
+process.on("exit", (code) => {
+  if (code !== 0) console.error(`  [node] exiting with code ${code}`);
+});
+
 process.on("uncaughtException", (err) => {
   const msg = (err && err.message) || String(err);
   if (TEARDOWN_NOISE.test(msg)) {

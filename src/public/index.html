@@ -371,8 +371,18 @@ function waRender(st){
   const qr=$("#waQr");
   if(st.qr){ qr.innerHTML=""; const i=new Image(); i.src=st.qr; i.width=280;
     i.style.cssText="border-radius:8px;background:#fff;padding:10px"; qr.appendChild(i);
-    const age=st.qrAge==null?"":` · ${st.qrAge}s old`;
-    qr.appendChild(el("div","sub",`Scan now${age} — the code rotates every ~20s, an old one fails to link`)); }
+    // Only warn when the code is genuinely stale relative to the MEASURED
+    // rotation interval; the old hardcoded "~20s" was a guess.
+    const rot=st.qrRotateSecs;
+    const age=st.qrAge;
+    let note="Scan this code";
+    if(age!=null){
+      const stale = rot ? age > rot*1.5 : age > 90;
+      note = stale
+        ? `Code is ${age}s old — waiting for a fresh one, scan when it updates`
+        : `Scan now · ${age}s old${rot?` (refreshes about every ${rot}s)`:""}`;
+    }
+    qr.appendChild(el("div","sub",note)); }
   else if(st.status==="ready"){ qr.innerHTML='<span class="sub">Linked ✓</span>'; }
   else qr.innerHTML="";
 
