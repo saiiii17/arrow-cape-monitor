@@ -6,7 +6,7 @@ const path = require("path");
 const { execFileSync } = require("child_process");
 const { append, stats, toRecord, clearAll } = require("./livestore");
 
-const PROFILE_DIR = path.join(__dirname, "..", ".wwebjs_auth", "session-monitor");
+const PROFILE_DIR = path.join(process.env.WWEBJS_PATH || path.join(__dirname, "..", ".wwebjs_auth"), "session-monitor");
 const WATCH_FILE = path.join(__dirname, "..", "data", "watched-groups.json");
 
 // The chosen groups must survive a server restart, or captured messages become
@@ -177,7 +177,9 @@ function start() {
   const waVersion = process.env.WA_VERSION || "";
 
   client = new Client({
-    authStrategy: new LocalAuth({ clientId: "monitor" }),
+    // WWEBJS_PATH lets the login live on a persistent disk in the cloud (paid
+    // tier), so a redeploy or restart does not force a re-scan. Unset locally.
+    authStrategy: new LocalAuth({ clientId: "monitor", ...(process.env.WWEBJS_PATH ? { dataPath: process.env.WWEBJS_PATH } : {}) }),
     // NOTE: takeoverOnConflict was tried and made things worse on this build --
     // it produced a permanent "Use here" conflict even with no other client
     // open. The plain config below is what actually reached "ready".

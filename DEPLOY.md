@@ -42,9 +42,8 @@ so the WhatsApp session and data survive restarts:
       sizeGB: 1
 ```
 
-Then also persist the WhatsApp session by mounting it — set an env var
-`WWEBJS_PATH=/app/data/wwebjs_auth` (ask me to wire LocalAuth to it) so the login
-survives deploys. Commit, push, Render auto-redeploys. Result: always-on, no
+Then set the env var `WWEBJS_PATH=/app/data/wwebjs_auth` (already wired) so the
+WhatsApp login lives on that disk and survives deploys — no re-scan. Commit, push, Render auto-redeploys. Result: always-on, no
 re-scan, permanent professional URL.
 
 ## Updating the app later
