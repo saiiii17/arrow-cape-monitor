@@ -741,6 +741,9 @@ async function loadC3(){
     const r=await fetch("/api/c3?"+p.toString());
     const d=await r.json();
     if(d.error){ $("#meta3").textContent="Failed: "+d.error; host.innerHTML=""; return; }
+    if(d.empty || (!d.cargo.length && !d.tonnage.length && (d.source||"").indexOf("saved")<0 && (d.source||"").indexOf("live")<0)){
+      $("#meta3").textContent=d.source||"No C3 data yet — connect WhatsApp and pull history";
+    }
     renderC3(d);
   }catch(e){ $("#meta3").textContent="Failed: "+e.message; }
 }

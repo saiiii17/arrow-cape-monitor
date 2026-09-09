@@ -118,7 +118,8 @@ const server = http.createServer(async (req, res) => {
   if (url.pathname === "/api/c3/meta") {
     const c3 = require("./c3");
     const dates = c3.availableDates();
-    const asOf = url.searchParams.get("date") || dates[dates.length - 1];
+    const today = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Dubai" }).format(new Date());
+    const asOf = url.searchParams.get("date") || dates[dates.length - 1] || today;
     let suggested = null;
     try {
       suggested = c3.suggestedWindow(asOf);
@@ -129,7 +130,7 @@ const server = http.createServer(async (req, res) => {
     const cached = fs.existsSync(dir)
       ? fs.readdirSync(dir).filter((f) => f.endsWith(".json")).map((f) => f.replace(".json", "")).sort()
       : [];
-    return json(res, 200, { dates, first: dates[0], last: dates[dates.length - 1], asOf, suggested, cached });
+    return json(res, 200, { dates, first: dates[0] || today, last: dates[dates.length - 1] || today, asOf, suggested, cached });
   }
 
   if (url.pathname === "/api/c3/cached") {

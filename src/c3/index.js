@@ -98,6 +98,22 @@ async function recordsFor(date, { refresh = false, onProgress } = {}) {
 async function buildRundown({ date, lookback = 2, window: windowText, windowFrom, windowTo, refresh = false, onProgress } = {}) {
   const dates = availableDates(messages());
   const asOf = date || dates[dates.length - 1];
+
+  // No data yet (fresh deploy, or before WhatsApp is connected): return a clean
+  // empty position instead of crashing on asOf.slice().
+  if (!asOf) {
+    return {
+      asOf: null,
+      span: [],
+      ballasterDate: null,
+      source: source.label(current()),
+      windowText: windowText || null,
+      state: { cargo: [], tonnage: [], fixtures: [] },
+      text: "",
+      empty: true,
+    };
+  }
+
   const year = Number(asOf.slice(0, 4));
 
   const span = dates.filter((d) => d <= asOf).slice(-lookback);
@@ -158,6 +174,7 @@ async function buildRundown({ date, lookback = 2, window: windowText, windowFrom
 const MONTH_NAMES = { jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6, jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12 };
 
 function suggestedWindow(asOf) {
+  if (!asOf) return null;
   const list = latestList(messages(), asOf);
   const text = list?.indexDates;
   if (!text) return null;
