@@ -146,6 +146,7 @@ function start() {
   // A stored session means this account is linked even before it finishes
   // loading, so the sample must not flash on screen meanwhile.
   if (fs.existsSync(PROFILE_DIR)) process.env.WA_LINKED = "1";
+  state.abandoned = false;
   step("Launching WhatsApp Web…");
 
   // A start that never reaches "qr" or "ready" would otherwise sit on
@@ -584,9 +585,15 @@ function wipeSession() {
   }
 }
 
-async function logout({ unlink = true, wipe = false, clearData = false } = {}) {
+// Returns immediately. The state is reset synchronously so the UI reflects
+// "disconnected" at once; the browser teardown (which can take many seconds and
+// occasionally hangs) runs in the background and can never block the caller.
+function logout({ unlink = true, wipe = false, clearData = false } = {}) {
   clearTimeout(state.startTimer);
   clearInterval(state.claimTimer);
+  clearInterval(state.authWatchdog);
+  // Abort anything the connect flow might still be doing.
+  state.abandoned = true;
   const c = client;
   client = null;
 
@@ -625,16 +632,16 @@ async function logout({ unlink = true, wipe = false, clearData = false } = {}) {
     saveWatched(state.watching);
   }
 
-  if (!c) return;
-
-  // logout() can hang; never let it block the caller.
-  const withTimeout = (p, ms) => Promise.race([p, new Promise((r) => setTimeout(r, ms))]);
-  try {
-    if (unlink) await withTimeout(Promise.resolve().then(() => c.logout()).catch(() => {}), 8000);
-  } finally {
-    await withTimeout(Promise.resolve().then(() => c.destroy()).catch(() => {}), 8000);
+  // Background teardown -- never awaited, so the HTTP response is instant.
+  (async () => {
+    const withTimeout = (fn, ms) => Promise.race([Promise.resolve().then(fn).catch(() => {}), new Promise((r) => setTimeout(r, ms))]);
+    if (c) {
+      if (unlink) await withTimeout(() => c.logout(), 6000);
+      await withTimeout(() => c.destroy(), 6000);
+    }
     if (wipe) wipeSession();
-  }
+    clearStaleProfileLock(); // belt-and-braces: release the profile lock
+  })().catch(() => {});
 }
 
 // The same linked session sends the digest, so the owner scans one QR, not two.
@@ -813,6 +820,7 @@ async function claimSession() {
 function startClaimLoop(intervalMs) {
   clearInterval(state.claimTimer);
   state.claimTimer = setInterval(async () => {
+    if (state.abandoned) return clearInterval(state.claimTimer);
     if (!client || !client.pupPage) return;
     try {
       const seen = await claimSession();

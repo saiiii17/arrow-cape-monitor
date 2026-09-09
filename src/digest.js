@@ -114,4 +114,23 @@ async function buildDigestRange(from, to, opts = {}) {
   };
 }
 
-module.exports = { buildDigest, buildDigestSummarised, buildDigestRange, datesAvailable, WINDOW_START, WINDOW_END };
+// Raw grouped direct-updates across a range, with NO per-message summarisation
+// (that path makes a model call per update). The brief only needs the grouped
+// messages, so this keeps it to just the three account calls.
+function rawGroupsForRange(from, to, opts = {}) {
+  if (from && to && from > to) [from, to] = [to, from];
+  const all = datesAvailable(opts).filter((d) => d >= from && d <= to);
+  const groups = { RIO: { direct: [], indirect: [] }, FMG: { direct: [], indirect: [] }, BHP: { direct: [], indirect: [] } };
+  const messages = allMessages(opts.file);
+  for (const d of all) {
+    const day = messagesForDate(messages, d, WINDOW_START, WINDOW_END);
+    const g = groupByAccount(extractUpdates(day));
+    for (const acc of ["RIO", "FMG", "BHP"]) {
+      groups[acc].direct.push(...g[acc].direct);
+      groups[acc].indirect.push(...g[acc].indirect);
+    }
+  }
+  return { from: all[0] || from, to: all[all.length - 1] || to, groups };
+}
+
+module.exports = { buildDigest, buildDigestSummarised, buildDigestRange, rawGroupsForRange, datesAvailable, WINDOW_START, WINDOW_END };

@@ -89,24 +89,25 @@ const server = http.createServer(async (req, res) => {
     });
   }
 
-  // The consolidated copy-paste block for the C5 accounts.
+  // The consolidated copy-paste block for the C5 accounts. Cached by range so a
+  // second view is instant (each build is a set of model calls).
   if (url.pathname === "/api/digest/brief") {
     try {
       const from = url.searchParams.get("from");
       const to = url.searchParams.get("to");
-      const { buildBrief } = require("./brief");
-      const r = from && to
-        ? await buildDigestRange(from, to, {})
-        : await buildDigestSummarised(url.searchParams.get("date") || datesAvailable().pop());
-
-      // Range mode returns per-day groups; merge them per account.
-      let groups = r.groups;
-      if (!groups && r.days) {
-        groups = {};
-        for (const a of ["RIO", "FMG", "BHP"]) groups[a] = { direct: [], indirect: [] };
-        for (const d of r.days) for (const a of Object.keys(d.groups)) groups[a].direct.push(...d.groups[a].direct);
+      const sig = `${from}|${to}|${process.env.C5_GROUP || ""}|${process.env.WA_CONNECTED || ""}`;
+      global.__briefCache = global.__briefCache || new Map();
+      if (!url.searchParams.get("refresh") && global.__briefCache.has(sig)) {
+        return json(res, 200, { ...global.__briefCache.get(sig), cached: true });
       }
-      const brief = await buildBrief(groups, { from: r.from || r.date, to: r.to || r.date });
+      const { buildBrief } = require("./brief");
+      const { rawGroupsForRange } = require("./digest");
+      // Raw groups only -- no per-message summaries -- so the cost is just the
+      // three account calls, not one call per update.
+      const day = from || url.searchParams.get("date") || datesAvailable().pop();
+      const r = rawGroupsForRange(from || day, to || day, {});
+      const brief = await buildBrief(r.groups, { from: r.from, to: r.to });
+      global.__briefCache.set(sig, brief);
       return json(res, 200, brief);
     } catch (err) {
       return json(res, 500, { error: err.message });

@@ -58,8 +58,18 @@ function sourceFor(updates) {
     .join("\n\n");
 }
 
-async function briefForAccount(label, updates) {
-  if (!updates.length) return { account: label, quiet: true, line: "quiet so far" };
+// A "C5 Update" is the account's CURRENT position, not its whole history. Over
+// a long range that could be hundreds of messages (340 RIO updates across 3
+// months), which is slow to summarise and not what the owner wants. Cap to the most
+// recent updates -- enough to capture the latest levels and any movement.
+const MAX_UPDATES = 25;
+
+async function briefForAccount(label, updatesAll) {
+  if (!updatesAll.length) return { account: label, quiet: true, line: "quiet so far" };
+
+  const updates = [...updatesAll]
+    .sort((a, b) => (a.date === b.date ? a.time.localeCompare(b.time) : a.date.localeCompare(b.date)))
+    .slice(-MAX_UPDATES);
 
   const source = sourceFor(updates);
   let line = null;
@@ -93,10 +103,11 @@ async function briefForAccount(label, updates) {
 }
 
 async function buildBrief(groups, { from, to } = {}) {
-  const blocks = [];
-  for (const a of ACCOUNTS) {
-    blocks.push(await briefForAccount(a.label, groups[a.id]?.direct || []));
-  }
+  // RIO/FMG/BHP summaries are independent -- run them at once, not in series.
+  // Sequential was ~37s; parallel is ~one model call's latency.
+  const blocks = await Promise.all(
+    ACCOUNTS.map((a) => briefForAccount(a.label, groups[a.id]?.direct || []))
+  );
 
   const header = from && to && from !== to ? `*C5 Update:*  ${from} → ${to}` : `*C5 Update:*  ${from || ""}`.trimEnd();
   const text = [

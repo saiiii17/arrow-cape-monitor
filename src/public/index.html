@@ -104,13 +104,23 @@
   .mentions h4{margin:0 0 4px;font-size:10px;font-weight:600;color:var(--faint);text-transform:uppercase;letter-spacing:.07em}
   .mentions div{font-family:var(--mono);font-size:11.5px;color:var(--dim)}
   .empty{padding:16px 14px;color:var(--faint);font-style:italic;font-size:13px}
+  /* inline loading spinner */
+  .spin{display:inline-block;width:12px;height:12px;border:2px solid var(--line);
+    border-top-color:var(--accent);border-radius:50%;animation:sp .7s linear infinite;vertical-align:-2px;margin-right:7px}
+  @keyframes sp{to{transform:rotate(360deg)}}
+  /* live pulse in the header brand */
+  .livedot{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--good);
+    margin-left:8px;vertical-align:1px;box-shadow:0 0 0 0 var(--good);animation:lp 1.6s infinite}
+  @keyframes lp{0%{box-shadow:0 0 0 0 rgba(31,138,83,.5)}70%{box-shadow:0 0 0 6px rgba(31,138,83,0)}100%{box-shadow:0 0 0 0 rgba(31,138,83,0)}}
 
   /* ---- tables ---- */
   .cols2{display:grid;grid-template-columns:1fr 1fr;gap:14px;align-items:start}
   .scroll{overflow-x:auto}
   table{border-collapse:collapse;width:100%;font-size:12.5px}
+  .scroll{overflow-x:auto;max-height:70vh;overflow-y:auto}
   th{text-align:left;font-size:10px;letter-spacing:.07em;text-transform:uppercase;color:var(--faint);
-    font-weight:600;padding:8px 10px;border-bottom:1px solid var(--line);white-space:nowrap;background:var(--sunk)}
+    font-weight:600;padding:8px 10px;border-bottom:1px solid var(--line);white-space:nowrap;background:var(--sunk);
+    position:sticky;top:0;z-index:1}
   td{padding:7px 10px;border-bottom:1px solid var(--line2);vertical-align:top}
   tr:last-child td{border-bottom:0}
   tbody tr{cursor:pointer}
@@ -132,6 +142,10 @@
   .cands{padding:4px 0}
   .cand1{padding:9px 14px;border-top:1px solid var(--line2)}
   .why1{font-size:11.5px;color:var(--dim);margin-top:3px}
+  .gapchip{font-family:var(--mono);font-size:11px;font-weight:600;padding:0 6px;border-radius:4px;margin-left:6px}
+  .gap-good{background:rgba(31,138,83,.14);color:var(--good)}
+  .gap-mid{background:rgba(184,134,11,.14);color:var(--warn)}
+  .gap-wide{background:var(--sunk);color:var(--dim)}
   .cand{display:grid;grid-template-columns:52px 1fr;gap:12px;padding:10px 14px;border-top:1px solid var(--line2)}
   .cand:first-child{border-top:0}
   .score{font-family:var(--mono);font-size:17px;font-weight:700;text-align:center;line-height:1.15;padding-top:1px}
@@ -158,7 +172,7 @@
 <body>
 
 <header>
-  <div class="brand">Arrow Cape <span>· monitor</span></div>
+  <div class="brand">Arrow Cape <span>· monitor</span><span id="brandLive" hidden class="livedot" title="Live — capturing WhatsApp"></span></div>
   <nav role="tablist">
     <button role="tab" id="tab-c5" aria-selected="true">C5 Accounts</button>
     <button role="tab" id="tab-c3" aria-selected="false">C3 Cargo &amp; Tonnage</button>
@@ -413,6 +427,7 @@ async function waPoll(){
     try{
       const st=await (await fetch("/api/wa/status")).json();
       if(view==="wa") waRender(st);
+      const bd=$("#brandLive"); if(bd) bd.hidden=!st.connected;
       const sig=storeSig(st);
       if(lastSig!==null && sig!==lastSig){ await sourceChanged(); if(view!=="wa") toast("Data updated from WhatsApp"); }
       lastSig=sig;
@@ -690,8 +705,12 @@ function renderMatches(ms){
       const title=el("div","vsl",v);
       title.appendChild(el("span","sub","  "+[x.vessel.owner,
         x.vessel.eta?`ETA ${x.vessel.eta}`:null,
-        x.offer!==null?money(x.offer):"idea TBC",
-        x.gap!==null?`gap ${money(x.gap)}`:null].filter(Boolean).join("  ·  ")));
+        x.offer!==null?money(x.offer):"idea TBC"].filter(Boolean).join("  ·  ")));
+      if(x.gap!==null){
+        const cls = x.gap<=0?"gap-good":x.gap<=0.5?"gap-mid":"gap-wide";
+        const label = x.gap<0?`tradeable (+${money(-x.gap)})`:x.gap===0?"at bid — tradeable":`gap ${money(x.gap)}`;
+        title.appendChild(el("span","gapchip "+cls,label));
+      }
       box.appendChild(title);
       // Only the first reason -- the rest was noise.
       if(x.reasons.length) box.appendChild(el("div","why1",x.reasons[0]));
@@ -723,14 +742,14 @@ async function loadC5(){
   if(!from||!to) return;
   // Always the range endpoint: a calendar lets you pick a day with no traffic,
   // and the range form filters those out instead of erroring.
-  $("#meta5").textContent="loading…";
+  $("#meta5").innerHTML='<span class="spin"></span>loading…';
   brief=null; $("#brief").textContent="Press Rebuild to generate."; $("#briefMeta").textContent="";
   renderC5(await (await fetch(`/api/digest?from=${from}&to=${to}`)).json());
 }
 async function loadC3(){
   const host=$("#matches"); host.innerHTML="";
   host.appendChild(el("div","load","Extracting… first run for a day is rate-limited and can take a few minutes."));
-  $("#meta3").textContent="loading… (first run for a new group extracts with the model and can take a few minutes)";
+  $("#meta3").innerHTML='<span class="spin"></span>loading… (first run for a new group extracts with the model and can take a few minutes)';
   const p=new URLSearchParams();
   if($("#d3").value) p.set("date",$("#d3").value);
   if($("#winFrom").value && $("#winTo").value){
@@ -835,7 +854,7 @@ let brief=null;
 async function loadBrief(){
   const from=$("#d5from").value, to=$("#d5to").value;
   if(!from||!to) return;
-  $("#brief").textContent="Building…";
+  $("#brief").innerHTML='<span class="spin"></span>Building… (a few seconds)';
   $("#briefMeta").textContent="";
   try{
     const r=await (await fetch(`/api/digest/brief?from=${from}&to=${to}`)).json();
