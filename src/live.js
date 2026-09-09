@@ -145,6 +145,14 @@ function bucketFor(chatName) {
 function start({ fresh = false } = {}) {
   if (state.syncing) { step("Ignoring restart during history pull", "warn"); return state; }
 
+  // Already sitting on an unscanned QR? That IS a fresh, unlinked session and
+  // WhatsApp rotates the code every ~20s anyway. Reuse it instead of paying the
+  // full Chrome boot again (~60s on a free-tier container).
+  if (fresh && state.status === "qr" && state.qrDataUrl && client) {
+    step("QR already active — scan it now");
+    return state;
+  }
+
   // "Connect" always means a clean link: tear down any live client, hard-kill
   // every leftover Chrome, and drop the stored login so WhatsApp issues a NEW
   // QR rather than silently resuming an old session.
@@ -1394,4 +1402,17 @@ async function openChatByName(name) {
   }
 }
 
-module.exports = { start, snapshot, backfill, syncAll, probeModules, tryHydrate, diagnoseHistoryInternals, historySince, openChatByName, inspectAfterOpen, setWatching, logout, send, refreshGroups, importExport, clearStaleProfileLock, wipeSession };
+// Boot the browser in the background at startup. On a slow container Chrome
+// takes ~60s to reach the QR, so doing it up front means the code is already
+// waiting when the user opens the tab.
+function prewarm() {
+  if (process.env.WA_PREWARM === "0") return;
+  setTimeout(() => {
+    if (!client && state.status === "idle") {
+      step("Warming up WhatsApp Web so the QR is ready…");
+      try { start({ fresh: false }); } catch { /* non-fatal */ }
+    }
+  }, 1500);
+}
+
+module.exports = { start, snapshot, backfill, syncAll, prewarm, probeModules, tryHydrate, diagnoseHistoryInternals, historySince, openChatByName, inspectAfterOpen, setWatching, logout, send, refreshGroups, importExport, clearStaleProfileLock, wipeSession };

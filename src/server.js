@@ -346,6 +346,9 @@ try {
   /* nothing to clear */
 }
 
+// Start Chrome immediately so the QR is ready before anyone clicks Connect.
+try { live.prewarm(); } catch { /* non-fatal */ }
+
 server.listen(PORT, "0.0.0.0", () => {
   const dates = datesAvailable();
   console.log(`\n  C5 account monitor  →  http://localhost:${PORT}`);
