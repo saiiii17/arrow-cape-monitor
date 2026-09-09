@@ -199,10 +199,30 @@ function start() {
       ...(process.env.PUPPETEER_EXECUTABLE_PATH && fs.existsSync(process.env.PUPPETEER_EXECUTABLE_PATH)
         ? { executablePath: process.env.PUPPETEER_EXECUTABLE_PATH }
         : {}),
-      // Minimal, cross-platform flag set. NOTE: --no-zygote / --single-process
-      // crash Chrome on macOS; do not add them. --disable-dev-shm-usage is the
-      // only container-specific one and is harmless elsewhere.
-      args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"],
+      // Platform-specific flags. On macOS the minimal set is all Chrome will
+      // accept (--no-zygote crashes it). In the Linux container Chromium runs
+      // as root on a small (512 MB free-tier) box, so it needs the sandbox-off
+      // process flags AND memory-saving ones, or it dies at launch with
+      // "Failed to launch the browser process: Code: null".
+      args: [
+        "--no-sandbox",
+        "--disable-setuid-sandbox",
+        "--disable-dev-shm-usage",
+        ...(process.platform === "linux"
+          ? [
+              "--disable-gpu",
+              "--no-zygote",
+              "--single-process",          // one renderer: far less RAM
+              "--disable-extensions",
+              "--disable-background-networking",
+              "--disable-default-apps",
+              "--disable-sync",
+              "--no-first-run",
+              "--mute-audio",
+              "--js-flags=--max-old-space-size=256",
+            ]
+          : []),
+      ],
     },
   });
 
