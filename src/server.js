@@ -179,7 +179,8 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (url.pathname === "/api/wa/start" && req.method === "POST") {
-    live.start();
+    // Connect = always a fresh QR. Pass ?resume=1 to reuse a stored login.
+    live.start({ fresh: url.searchParams.get("resume") !== "1" });
     return json(res, 200, live.snapshot());
   }
 

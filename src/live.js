@@ -142,9 +142,35 @@ function bucketFor(chatName) {
   return null;
 }
 
-function start() {
-  if (client) return state;
+function start({ fresh = false } = {}) {
   if (state.syncing) { step("Ignoring restart during history pull", "warn"); return state; }
+
+  // "Connect" always means a clean link: tear down any live client, hard-kill
+  // every leftover Chrome, and drop the stored login so WhatsApp issues a NEW
+  // QR rather than silently resuming an old session.
+  if (fresh) {
+    if (client) { const c = client; client = null; Promise.resolve().then(() => c.destroy()).catch(() => {}); }
+    clearTimeout(state.startTimer);
+    clearInterval(state.claimTimer);
+    clearInterval(state.authWatchdog);
+    state.abandoned = true;
+    clearStaleProfileLock();
+    wipeSession();
+    state.status = "idle";
+    state.qrDataUrl = null;
+    state.me = null;
+    state.groups = [];
+    state.connected = false;
+    state.claimedSession = false;
+    state.conflictStreak = 0;
+    state.reclaimRestart = false;
+    process.env.WA_LINKED = "";
+    process.env.WA_CONNECTED = "";
+    state.steps = [];
+    step("Cleared previous session — requesting a new QR…");
+  }
+
+  if (client) return state;
   // Anything left over from a previous run would block the launch.
   clearStaleProfileLock();
   state.status = "starting";

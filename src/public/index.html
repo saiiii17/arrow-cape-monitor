@@ -437,7 +437,24 @@ async function waPoll(){
   waTimer=setInterval(tick, 3000);
 }
 
-$("#waStart").onclick=async(e)=>{ e.target.disabled=true; try{ waRender(await (await fetch("/api/wa/start",{method:"POST"})).json()); toast("Starting — QR shortly"); } finally { setTimeout(()=>e.target.disabled=false,4000); } };
+$("#waStart").onclick=async(e)=>{
+  e.target.disabled=true;
+  // Immediate feedback: the QR takes a few seconds to arrive.
+  $("#waPhase").innerHTML='<span class="spin"></span>Clearing old sessions and requesting a new QR…';
+  $("#waDot").className="dot busy";
+  $("#waQr").innerHTML='<span class="sub">generating…</span>';
+  try{
+    waRender(await (await fetch("/api/wa/start",{method:"POST"})).json());
+    toast("New QR on the way");
+    // Poll fast until the QR lands so it appears the moment it is ready.
+    for(let i=0;i<40;i++){
+      await new Promise(r=>setTimeout(r,700));
+      const st=await (await fetch("/api/wa/status")).json();
+      waRender(st);
+      if(st.qr||st.status==="ready"||st.status==="error") break;
+    }
+  } finally { e.target.disabled=false; }
+};
 $("#waReset").onclick=async(e)=>{
   e.target.disabled=true;
   try{ waRender(await (await fetch("/api/wa/reset",{method:"POST"})).json()); toast("Session reset — press Connect"); }
