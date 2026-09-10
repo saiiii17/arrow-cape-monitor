@@ -12,6 +12,21 @@ const PROFILE_DIR = path.join(process.env.WWEBJS_PATH || path.join(__dirname, ".
 // not the 30s defaults.
 const LAUNCH_MS = Number(process.env.LAUNCH_TIMEOUT_MS || 240_000);
 
+// After a Chromium crash the client object survives but its page is a corpse;
+// every call then fails with "detached Frame" / "Target closed". These helpers
+// tell a dead page apart from a genuine data problem.
+const DEAD_PAGE = /detached Frame|Target closed|Session closed|Execution context was destroyed|Protocol error|Most likely the page has been closed/i;
+
+async function pageUsable() {
+  try {
+    if (!client || !client.pupPage || client.pupPage.isClosed()) return false;
+    await client.pupPage.evaluate(() => 1);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 // cgroup v2 memory accounting -- the only reliable way to tell an OOM kill
 // apart from a slow start inside a container.
 function containerMemory() {
@@ -619,6 +634,7 @@ async function refreshGroups({ retries = 0 } = {}) {
 // rather than waiting for new traffic.
 async function backfill(groupName, { since, limit = 50000 } = {}) {
   if (state.status !== "ready") throw new Error("WhatsApp is not connected yet");
+  if (!(await pageUsable())) throw new Error("Connection lost — reconnecting; try again in a moment");
 
   if (!state.groups.length) await refreshGroups();
   const known =
@@ -652,6 +668,17 @@ async function backfill(groupName, { since, limit = 50000 } = {}) {
 async function syncAll() {
   if (state.status !== "ready") return;
   if (state.syncing) return;
+
+  // The browser may have crashed and been replaced since we were marked ready.
+  if (!(await pageUsable())) {
+    state.connected = false;
+    process.env.WA_CONNECTED = "";
+    step("Connection was lost — reconnecting, then pull history again", "warn");
+    hardStop();
+    setTimeout(() => start({ fresh: false }), 3000);
+    return;
+  }
+
   state.syncing = true;
   state.connected = false;
   const targets = [
@@ -667,8 +694,15 @@ async function syncAll() {
         results.push({ tag, group: g, ok: true, ...r });
         step(`${tag} · ${g}: ${r.found} messages${r.added ? ` (${r.added} new)` : ""} — ${r.store.first || "-"} → ${r.store.last || "-"}`);
       } catch (e) {
-        results.push({ tag, group: g, ok: false, error: e.message });
-        step(`${tag} · ${g}: history failed — ${e.message.slice(0, 80)}`, "error");
+        const dead = DEAD_PAGE.test(e.message || "");
+        results.push({ tag, group: g, ok: false, error: e.message, dead });
+        step(
+          dead
+            ? `${tag} · ${g}: connection lost mid-pull — will reconnect`
+            : `${tag} · ${g}: history failed — ${e.message.slice(0, 80)}`,
+          "error"
+        );
+        if (dead) break; // no point trying the next group on a dead page
       }
     }
   } finally {
@@ -681,7 +715,17 @@ async function syncAll() {
   if (allOk) {
     step(`Live — watching ${targets.map(([, g]) => g).join(", ")}. New messages appear automatically.`, "ok");
   } else if (results.length) {
-    step("History incomplete — check the group names, then press Pull history", "error");
+    const dead = results.some((r) => r.dead);
+    if (dead) {
+      step("Connection dropped during the pull — reconnecting…", "warn");
+      state.connected = false;
+      process.env.WA_CONNECTED = "";
+      hardStop();
+      setTimeout(() => start({ fresh: false }), 3000);
+    } else {
+      const bad = results.filter((r) => !r.ok).map((r) => r.group).join(", ");
+      step(`Could not read: ${bad}. Check the exact group name, then press Pull history`, "error");
+    }
   }
   return results;
 }
