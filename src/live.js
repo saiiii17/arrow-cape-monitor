@@ -416,7 +416,10 @@ function start({ fresh = false } = {}) {
     if (state.watching.c5 || state.watching.c3) {
       await syncAll();
     } else {
-      step("Ready — type the C5 and C3 group names and press Save", "info");
+      step("Linked. Now enter the C5 and C3 group names below and press Save groups & pull history", "info");
+      if (!process.env.WWEBJS_PATH) {
+        step("Note: no persistent volume — group names and the login reset on each redeploy", "warn");
+      }
     }
   });
 

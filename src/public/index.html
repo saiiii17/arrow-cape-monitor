@@ -347,7 +347,11 @@ function waRender(st){
   const meta=$("#waMeta");
   meta.textContent = st.connected
     ? `LIVE as ${st.me||"?"} · ${st.captured} new since connect${st.lastMessageAt?" · last "+new Date(st.lastMessageAt).toLocaleTimeString():""}`
-    : st.status==="ready" ? `linked as ${st.me||"?"} — ${st.syncing?"pulling history…":"not yet syncing"}`
+    : st.status==="ready"
+      ? `linked as ${st.me||"?"} — ${
+          st.syncing ? "pulling history…"
+          : (!st.watching.c5 && !st.watching.c3) ? "enter your C5 and C3 group names below, then Save"
+          : "press Save groups & pull history"}`
     : st.status + (st.startingFor?` (${st.startingFor}s${st.startingFor>20?" — first launch on a free server can take 1-2 min":""})`:"") + (st.error?` — ${st.error}`:"");
 
   // Phase banner + step log: the user asked to see what WhatsApp is doing.
