@@ -288,14 +288,21 @@ function start({ fresh = false } = {}) {
               // --no-zygote/--single-process cut memory but can destabilise
               // Chromium. Set WA_NO_SINGLE_PROCESS=1 to A/B this on the host
               // without a code change.
-              ...(process.env.WA_NO_SINGLE_PROCESS === "1" ? [] : ["--no-zygote", "--single-process"]),          // one renderer: far less RAM
+              // Multi-process by DEFAULT: --single-process concentrates all of
+              // WhatsApp Web in one process, so hitting the cgroup limit kills
+              // the whole browser (observed: oom_kill after loading 127 groups).
+              // Opt back in with WA_SINGLE_PROCESS=1 on very small boxes.
+              ...(process.env.WA_SINGLE_PROCESS === "1" ? ["--no-zygote", "--single-process"] : []),          // one renderer: far less RAM
               "--disable-extensions",
               "--disable-background-networking",
               "--disable-default-apps",
               "--disable-sync",
               "--no-first-run",
               "--mute-audio",
-              "--js-flags=--max-old-space-size=256",
+              // Trim WhatsApp Web's memory growth without capping the JS heap
+              // (a hard cap caused GC thrash and did not limit native memory).
+              "--disable-back-forward-cache",
+              "--disable-features=BackForwardCache,AcceptCHFrame,MediaRouter,Translate",
             ]
           : []),
       ],
@@ -376,6 +383,7 @@ function start({ fresh = false } = {}) {
     process.env.WA_LINKED = "1";
     state.qrDataUrl = null;
     state.reclaims = 0;
+    state.crashes = 0;
     state.conflictStreak = 0;
     state.reclaimRestart = false;
     state.reloadTried = false;
@@ -481,9 +489,29 @@ function start({ fresh = false } = {}) {
       }
       proc.on("exit", (code, signal) => {
         const m = containerMemory();
-        const oom = m && m.oomKill !== "0" ? ` (cgroup oom_kill=${m.oomKill} — out of memory)` : "";
+        const wasOom = Boolean(m && m.oomKill !== "0");
+        const oom = wasOom ? ` (cgroup oom_kill=${m.oomKill} — out of memory)` : "";
         console.error(`  [wa] chromium exited code=${code} signal=${signal}${oom}`);
-        step(`Chromium exited${oom || ` (code ${code})`}`, "error");
+        if (state.abandoned || state.status === "idle") return; // deliberate teardown
+
+        // A crash mid-session leaves the app dead until someone presses Connect.
+        // Come back automatically, but cap it so a hard OOM loop cannot spin.
+        state.crashes = (state.crashes || 0) + 1;
+        if (state.crashes <= 3) {
+          step(
+            `Chromium exited${oom} — restarting (${state.crashes}/3)` +
+              (wasOom ? ". Set WA_NO_SINGLE_PROCESS=1 or raise the memory limit if this repeats." : ""),
+            "warn"
+          );
+          hardStop();
+          setTimeout(() => start({ fresh: false }), 4000);
+        } else {
+          state.status = "error";
+          state.error = wasOom
+            ? "Chromium keeps running out of memory. Set WA_NO_SINGLE_PROCESS=1, or give the service more RAM."
+            : `Chromium keeps exiting (code ${code}).`;
+          step(state.error, "error");
+        }
       });
     } catch {
       /* browser not up yet */

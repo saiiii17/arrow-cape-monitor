@@ -29,4 +29,4 @@ COPY . .
 # so mount a persistent disk at /app/data and /app/.wwebjs_auth on the platform.
 EXPOSE 4321
 # Cap Node's heap so headless Chromium has memory left on a 512 MB box.
-CMD ["node", "--max-old-space-size=200", "src/server.js"]
+CMD ["node", "--max-old-space-size=256", "src/server.js"]
