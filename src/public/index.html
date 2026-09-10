@@ -429,7 +429,8 @@ function waRender(st){
 let lastSig=null;
 function storeSig(st){ return JSON.stringify([st.connected, st.stores, st.watching, st.status==="idle"]); }
 async function sourceChanged(){
-  // Source may have flipped between sample and live: date bounds change too.
+  // Refresh the bounds (the source may have flipped between sample and live)
+  // but keep whatever range the user is looking at.
   await initDates();
   c3=null; brief=null;
   if(view==="c5") await loadC5();
@@ -831,18 +832,28 @@ function todayDubai(){
   const p=new Intl.DateTimeFormat("en-CA",{timeZone:"Asia/Dubai",year:"numeric",month:"2-digit",day:"2-digit"}).formatToParts(new Date());
   const g=(t)=>p.find(x=>x.type===t).value; return `${g("year")}-${g("month")}-${g("day")}`;
 }
+let datesReady=false;
 async function initDates(){
   const {dates}=await (await fetch("/api/dates")).json();
   const today=todayDubai();
-  const first=dates[0]||today;
   const latestWithData=[...dates].filter(d=>d<=today).pop()||today;
-  for(const sel of [$("#d5from"),$("#d5to")]){ sel.min=first; sel.max=today; }
-  // To is always today; From is the most recent day that has data so the first
-  // view is never blank.
-  $("#d5to").value=today;
-  $("#d5from").value=latestWithData;
+
+  // Allow browsing a full year back even when the store only holds a few days.
+  // Locking min to the first stored day made every earlier date unclickable,
+  // which reads as broken; an empty range simply reports "no messages".
+  const yearAgo=new Date(Date.now()-365*864e5).toISOString().slice(0,10);
+  const min=(dates[0]&&dates[0]<yearAgo)?dates[0]:yearAgo;
+  for(const sel of [$("#d5from"),$("#d5to")]){ sel.min=min; sel.max=today; }
+
+  // Only choose defaults ONCE. Re-running this on every live message was
+  // resetting the pickers to today and wiping the user's selection.
+  if(!datesReady){
+    $("#d5to").value=today;
+    $("#d5from").value=latestWithData;
+    datesReady=true;
+  }
   $("#d5today").textContent="Today";
-  $("#d5today").title=`From = ${latestWithData} (latest with data), To = ${today}`;
+  $("#d5today").title=`Jump to ${today}`;
 }
 
 // Keep the range sane: From must not be after To.
