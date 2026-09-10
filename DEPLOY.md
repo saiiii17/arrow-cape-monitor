@@ -1,38 +1,39 @@
-# Deploy — permanent link (Render)
+# Deploy
 
-The app runs in Render's cloud, so the link is permanent and unaffected by your
-Mac sleeping or being off.
+The app is a Node server driving headless Chromium (whatsapp-web.js). The single
+hard requirement is **CPU** — measured on the exact image:
 
-## One-time deploy (free)
+| CPU / RAM        | Time to QR         | Peak RAM     |
+|------------------|--------------------|--------------|
+| 0.1 CPU / 512 MB | **never** (>312 s) | 282 / 512 MB |
+| 0.5 CPU / 512 MB | 26 s               | 375 / 512 MB |
+| 1.0 CPU / 512 MB | **10 s**           | 353 / 512 MB |
 
-1. Go to **https://render.com** → sign up (use the GitHub account `saiiii17`).
-2. **New → Blueprint**.
-3. Connect the repo **arrow-cape-monitor** → Render reads `render.yaml`.
-4. It creates a Docker web service named **arrow-cape-monitor**.
-5. Under **Environment**, set the two secrets (they are not in the repo):
-   - `ANTHROPIC_API_KEY` — your Anthropic key
-   - `GROQ_API_KEY` — your Groq key
-6. **Apply / Deploy.** First build takes ~5–8 min (it installs Chromium).
-7. You get a permanent URL: **https://arrow-cape-monitor.onrender.com**
-   (exact name may vary if taken — Render shows it).
+Memory is never the constraint. **Do not deploy on 0.1 CPU** — the QR may appear
+by bursting, but pairing (auth + inject) needs sustained CPU and never completes.
 
-Send that URL to the owner. He opens it → WhatsApp tab → scans → types his C5/C3
-group names → Save groups & pull history → Live.
+---
 
-## Free vs paid
+## Recommended: Railway (free tier has 1 vCPU / 512 MB)
 
-`render.yaml` is set to **free**:
-- URL is permanent and cloud-hosted (Mac irrelevant).
-- Sleeps after ~15 min idle; next visit cold-starts in ~1 min.
-- No persistent disk on free, so a cold start resets the WhatsApp login —
-  the owner re-scans when he returns. Fine for occasional testing.
-- 512 MB RAM: pulling very large history (tens of thousands of messages) may be
-  tight. Normal use is fine.
+Railway's free ceiling matches the configuration measured at 10 s to QR.
 
-## Production (paid, always-on) — you said you don't mind paying
+1. https://railway.app → sign in with GitHub (`saiiii17`)
+2. **New Project → Deploy from GitHub repo** → `arrow-cape-monitor`
+3. Railway reads `railway.json` and builds the `Dockerfile`.
+4. **Variables** → add:
+   - `ANTHROPIC_API_KEY`
+   - `GROQ_API_KEY`
+   - `WWEBJS_PATH=/app/data/wwebjs_auth`   (so the login survives restarts)
+5. **Settings → Volumes** → add a volume mounted at `/app/data`
+   (without it the WhatsApp login is lost on every redeploy and the owner re-scans).
+6. **Settings → Networking → Generate Domain** → that URL is the permanent link.
 
-In `render.yaml`, change `plan: free` to `plan: starter` (~$7/mo) and add a disk
-so the WhatsApp session and data survive restarts:
+## Alternative: Render
+
+`render.yaml` is included. **Free tier (0.1 CPU) will not pair** — use it only to
+confirm the app boots. For a working deployment change `plan: free` to
+`plan: starter` (0.5 CPU, ~$7/mo) and add a disk:
 
 ```yaml
     plan: starter
@@ -41,12 +42,29 @@ so the WhatsApp session and data survive restarts:
       mountPath: /app/data
       sizeGB: 1
 ```
+plus env var `WWEBJS_PATH=/app/data/wwebjs_auth`.
 
-Then set the env var `WWEBJS_PATH=/app/data/wwebjs_auth` (already wired) so the
-WhatsApp login lives on that disk and survives deploys — no re-scan. Commit, push, Render auto-redeploys. Result: always-on, no
-re-scan, permanent professional URL.
+Render `1c-2g` (~$25/mo) is the comfortable tier if it must run unattended.
 
-## Updating the app later
+## Local (free, but your Mac must stay awake)
 
-Any code fix: `git commit` + `git push` → Render auto-redeploys in a few minutes.
-Same URL. the owner just refreshes.
+```bash
+npm run dashboard                       # http://localhost:4321
+cloudflared tunnel --url http://localhost:4321   # public link
+```
+
+## Environment variables
+
+| Variable | Purpose |
+|---|---|
+| `ANTHROPIC_API_KEY` | C3 extraction + C5 summaries (Haiku) |
+| `GROQ_API_KEY` | alternative extraction provider |
+| `WWEBJS_PATH` | put the WhatsApp login on a persistent volume |
+| `LAUNCH_TIMEOUT_MS` | browser launch / auth budget (default 240000) |
+| `WA_DEBUG=1` | stream Chromium stdout/stderr for diagnosis |
+| `WA_NO_SINGLE_PROCESS=1` | drop `--single-process` (A/B a Chromium issue) |
+| `WA_PREWARM=0` | do not start Chromium at boot |
+
+## Updating
+
+`git push` → the platform redeploys automatically. Same URL. the owner just refreshes.
