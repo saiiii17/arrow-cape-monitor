@@ -27,6 +27,25 @@ async function pageUsable() {
   }
 }
 
+// Is the QR still on screen? WhatsApp stops rotating the code the moment a
+// phone scans it, so "stale" and "scanned" look identical from the qr event
+// alone. The DOM tells them apart: whatsapp-web.js reads the code out of
+// div[data-ref], and that element is gone once the handshake starts.
+// Returns true (still waiting), false (scanned), or null (cannot tell).
+async function qrOnScreen() {
+  try {
+    if (!client || !client.pupPage || client.pupPage.isClosed()) return null;
+    return await client.pupPage.evaluate(() => {
+      const el = document.querySelector("div[data-ref]");
+      if (!el) return false;
+      const r = el.getBoundingClientRect();
+      return r.width > 0 && r.height > 0;
+    });
+  } catch {
+    return null; // page is wedged; the caller should restart
+  }
+}
+
 // cgroup v2 memory accounting -- the only reliable way to tell an OOM kill
 // apart from a slow start inside a container.
 function containerMemory() {
@@ -342,16 +361,43 @@ function start({ fresh = false } = {}) {
     // CPU-starved on a small container), the displayed QR goes stale and will
     // not link. Relaunch to get a live one rather than showing a dead code.
     clearTimeout(state.qrStaleTimer);
-    state.qrStaleTimer = setTimeout(() => {
+    state.qrStaleTimer = setTimeout(async () => {
       if (state.status !== "qr") return;
+      // Rotation also stops when someone scans. Restarting here aborted the
+      // link mid-handshake, which is what tripped WhatsApp's "can't link new
+      // devices" limit on the phone. Check the page before killing anything.
+      const onScreen = await qrOnScreen();
+      if (state.status !== "qr") return; // authenticated while we probed
+      if (onScreen === false) {
+        step("Code scanned — completing the link…");
+        // Nothing more to do here: `authenticated` arms its own watchdog. If
+        // the handshake dies silently, this one last timer recovers.
+        clearTimeout(state.qrStaleTimer);
+        state.qrStaleTimer = setTimeout(() => {
+          if (state.status !== "qr") return;
+          step("Link did not complete — restarting to get a fresh code", "warn");
+          hardStop();
+          setTimeout(() => start({ fresh: false }), 1500);
+        }, Number(process.env.QR_SCAN_GRACE_MS || 120_000));
+        return;
+      }
       const age = Math.round((Date.now() - state.qrAt) / 1000);
       step(`QR stopped refreshing (${age}s old) — restarting to get a live code`, "warn");
       hardStop();
       setTimeout(() => start({ fresh: false }), 1500);
-    }, Number(process.env.QR_STALE_MS || 60_000));
+    }, Number(process.env.QR_STALE_MS || 90_000));
+  });
+
+  // Fires after a successful scan, before `authenticated`. Whatever else it
+  // means, it means the code was taken -- stand the restart timer down.
+  client.on("loading_screen", (percent) => {
+    clearTimeout(state.qrStaleTimer);
+    if (state.status === "qr") step("Code scanned — loading WhatsApp Web…");
+    state.loadingPercent = percent;
   });
 
   client.on("authenticated", () => {
+    clearTimeout(state.qrStaleTimer);
     state.status = "authenticated";
     process.env.WA_LINKED = "1"; // from here on, sample data is never shown
     state.qrDataUrl = null;
