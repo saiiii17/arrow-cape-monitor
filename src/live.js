@@ -17,6 +17,36 @@ const LAUNCH_MS = Number(process.env.LAUNCH_TIMEOUT_MS || 240_000);
 // tell a dead page apart from a genuine data problem.
 const DEAD_PAGE = /detached Frame|Target closed|Session closed|Execution context was destroyed|Protocol error|Most likely the page has been closed/i;
 
+const { createSupervisor } = require("./wa-supervisor");
+
+// One arbiter for every teardown in this file. Watchdogs report to it; it
+// alone decides. See src/wa-supervisor.js for why.
+const supervisor = createSupervisor();
+
+// The only sanctioned way to restart the browser. `force` is for callers who
+// know the page is already dead (a crash), where the "don't interrupt a scan"
+// guard cannot apply but the circuit breaker still must.
+function relaunch(reason, { force = false, delay = 3000, fresh = false } = {}) {
+  const decision = supervisor.requestRestart(reason, { force });
+  if (!decision.allow) {
+    // Refusals are the interesting case -- surface them rather than failing
+    // silently the way the old competing watchdogs did.
+    if (decision.tripped) {
+      state.status = "error";
+      state.error = decision.reason;
+      step(decision.reason, "error");
+    } else {
+      console.log(`  [wa] restart refused (${reason}): ${decision.reason}`);
+    }
+    return false;
+  }
+  hardStop();
+  state.status = "starting";
+  state.error = null;
+  setTimeout(() => start({ fresh }), delay);
+  return true;
+}
+
 async function pageUsable() {
   try {
     if (!client || !client.pupPage || client.pupPage.isClosed()) return false;
@@ -200,6 +230,7 @@ function bucketFor(chatName) {
 
 function start({ fresh = false } = {}) {
   if (state.syncing) { step("Ignoring restart during history pull", "warn"); return state; }
+  supervisor.event("launch");
 
   // Already sitting on an unscanned QR? That IS a fresh, unlinked session and
   // WhatsApp rotates the code every ~20s anyway. Reuse it instead of paying the
@@ -213,6 +244,9 @@ function start({ fresh = false } = {}) {
   // every leftover Chrome, and drop the stored login so WhatsApp issues a NEW
   // QR rather than silently resuming an old session.
   if (fresh) {
+    // An operator pressing Connect has waited out any lockout and is entitled
+    // to a clean slate, including the restart circuit breaker.
+    supervisor.reset();
     if (client) { const c = client; client = null; Promise.resolve().then(() => c.destroy()).catch(() => {}); }
     clearTimeout(state.startTimer);
     clearInterval(state.claimTimer);
@@ -346,6 +380,7 @@ function start({ fresh = false } = {}) {
   client.on("qr", async (qr) => {
     clearTimeout(state.startTimer);
     if (state.status !== "qr") step("Waiting for QR scan — phone → Linked Devices → Link a Device");
+    supervisor.event("qr_shown");
     state.status = "qr";
     state.qrDataUrl = await QR.toDataURL(qr, { margin: 1, width: 320 });
     // WhatsApp decides the rotation interval, not us. Measure it from the
@@ -369,34 +404,36 @@ function start({ fresh = false } = {}) {
       const onScreen = await qrOnScreen();
       if (state.status !== "qr") return; // authenticated while we probed
       if (onScreen === false) {
+        // The code left the DOM: a phone has it. From here the supervisor
+        // refuses teardowns until the handshake succeeds or truly times out.
+        supervisor.event("qr_taken");
         step("Code scanned — completing the link…");
         // Nothing more to do here: `authenticated` arms its own watchdog. If
         // the handshake dies silently, this one last timer recovers.
         clearTimeout(state.qrStaleTimer);
         state.qrStaleTimer = setTimeout(() => {
           if (state.status !== "qr") return;
-          step("Link did not complete — restarting to get a fresh code", "warn");
-          hardStop();
-          setTimeout(() => start({ fresh: false }), 1500);
+          relaunch("link did not complete after a scan", { delay: 1500 });
         }, Number(process.env.QR_SCAN_GRACE_MS || 120_000));
         return;
       }
       const age = Math.round((Date.now() - state.qrAt) / 1000);
       step(`QR stopped refreshing (${age}s old) — restarting to get a live code`, "warn");
-      hardStop();
-      setTimeout(() => start({ fresh: false }), 1500);
+      relaunch(`QR stale (${age}s)`, { delay: 1500 });
     }, Number(process.env.QR_STALE_MS || 90_000));
   });
 
   // Fires after a successful scan, before `authenticated`. Whatever else it
   // means, it means the code was taken -- stand the restart timer down.
   client.on("loading_screen", (percent) => {
+    supervisor.event("loading");
     clearTimeout(state.qrStaleTimer);
     if (state.status === "qr") step("Code scanned — loading WhatsApp Web…");
     state.loadingPercent = percent;
   });
 
   client.on("authenticated", () => {
+    supervisor.event("authenticated");
     clearTimeout(state.qrStaleTimer);
     state.status = "authenticated";
     process.env.WA_LINKED = "1"; // from here on, sample data is never shown
@@ -415,8 +452,7 @@ function start({ fresh = false } = {}) {
         if (!state.reloadedOnce) {
           state.reloadedOnce = true;
           step(`Still loading after ${waited}s — restarting the browser once`, "warn");
-          hardStop();
-          setTimeout(() => start(), 2500);
+          relaunch(`authenticated but not ready after ${waited}s`, { delay: 2500 });
         } else {
           step("WhatsApp Web did not finish loading. Press Force reset, then Connect.", "error");
           state.status = "error";
@@ -438,6 +474,7 @@ function start({ fresh = false } = {}) {
   });
 
   client.on("ready", async () => {
+    supervisor.event("ready"); // ends protection and every deadline
     clearTimeout(state.startTimer);
     clearInterval(state.authWatchdog);
     state.status = "ready";
@@ -567,8 +604,7 @@ function start({ fresh = false } = {}) {
               (wasOom ? ". Set WA_NO_SINGLE_PROCESS=1 or raise the memory limit if this repeats." : ""),
             "warn"
           );
-          hardStop();
-          setTimeout(() => start({ fresh: false }), 4000);
+          relaunch(`chromium exited${oom}`, { force: true, delay: 4000 });
         } else {
           state.status = "error";
           state.error = wasOom
@@ -594,10 +630,7 @@ function start({ fresh = false } = {}) {
     if (contextLost && !state.reclaimRestart) {
       state.reclaimRestart = true;
       step("Page reloaded during start-up — restarting once", "warn");
-      hardStop();
-      state.status = "starting";
-      state.error = null;
-      setTimeout(() => start(), 3000);
+      relaunch("execution context lost during start-up", { force: true });
       return;
     }
     // Self-heal the most common failure instead of asking for a terminal.
@@ -723,8 +756,7 @@ async function syncAll() {
     state.connected = false;
     process.env.WA_CONNECTED = "";
     step("Connection was lost — reconnecting, then pull history again", "warn");
-    hardStop();
-    setTimeout(() => start({ fresh: false }), 3000);
+    relaunch("page unusable before sync", { force: true });
     return;
   }
 
@@ -769,8 +801,7 @@ async function syncAll() {
       step("Connection dropped during the pull — reconnecting…", "warn");
       state.connected = false;
       process.env.WA_CONNECTED = "";
-      hardStop();
-      setTimeout(() => start({ fresh: false }), 3000);
+      relaunch("page died during history pull", { force: true });
     } else {
       const bad = results.filter((r) => !r.ok).map((r) => r.group).join(", ");
       step(`Could not read: ${bad}. Check the exact group name, then press Pull history`, "error");
@@ -1108,10 +1139,7 @@ function startClaimLoop(intervalMs) {
         state.reclaimRestart = true;
         step("Took the session from another WhatsApp client — restarting once", "warn");
         clearInterval(state.claimTimer);
-        hardStop();
-        state.status = "starting";
-        state.error = null;
-        setTimeout(() => start(), 2500);
+        relaunch("claimed the session from another client", { force: true, delay: 2500 });
         return;
       }
       // Once Live, the dialog is background noise handled by the library; it
