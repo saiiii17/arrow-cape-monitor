@@ -773,7 +773,16 @@ async function syncAll() {
       try {
         const r = await backfill(g, { since: state.watching.since || undefined });
         results.push({ tag, group: g, ok: true, ...r });
-        step(`${tag} · ${g}: ${r.found} messages${r.added ? ` (${r.added} new)` : ""} — ${r.store.first || "-"} → ${r.store.last || "-"}`);
+        // Why the pull ended matters as much as what it found: "starts on the
+        // 6th" reads as a bug when the group simply has nothing earlier, and
+        // reads as fine when history was actually truncated. Say which.
+        const why =
+          r.stopped === "no older messages"
+            ? ` · complete — nothing earlier in this group`
+            : r.stopped === "reached since-date"
+              ? ` · complete back to ${r.since}`
+              : ` · stopped early (${r.stopped}) — older history may still be on the phone`;
+        step(`${tag} · ${g}: ${r.found} messages${r.added ? ` (${r.added} new)` : ""} — ${r.store.first || "-"} → ${r.store.last || "-"}${why}`);
       } catch (e) {
         const dead = DEAD_PAGE.test(e.message || "");
         results.push({ tag, group: g, ok: false, error: e.message, dead });
