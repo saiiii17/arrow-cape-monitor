@@ -327,6 +327,7 @@ function shortName(raw){
 /* ---------------- view switching ---------------- */
 function show(v){
   view=v;
+  prefs.set("tab",v);
   for (const [k,tab,sec] of [["c5","#tab-c5","#v-c5"],["c3","#tab-c3","#v-c3"],["mx","#tab-mx","#v-mx"],["wa","#tab-wa","#v-wa"]]){
     $(tab).setAttribute("aria-selected", String(k===v));
     $(sec).hidden = k!==v;
@@ -801,14 +802,28 @@ async function loadC3(){
 // Everything on the C3 bar comes from the data: the day range, which days are
 // already extracted, and the window the desk itself is quoting.
 let c3Meta=null;
+let restoreWindowOnce=true;
 async function initC3Controls(asOf){
   const q = asOf ? `?date=${asOf}` : "";
   c3Meta = await (await fetch("/api/c3/meta"+q)).json();
   const d3=$("#d3");
   // As-of can be any day up to today; default to the latest day with data.
   d3.min=c3Meta.first; d3.max=todayDubai();
+  if(!d3.value){
+    const sd=prefs.get("d3");
+    if(sd&&sd>=d3.min&&sd<=d3.max) d3.value=sd;
+  }
   if(!d3.value || d3.value>d3.max || d3.value<d3.min) d3.value = c3Meta.cached.length ? c3Meta.cached[c3Meta.cached.length-1] : c3Meta.last;
-  applySuggestedWindow();
+  prefs.set("d3",d3.value);
+  // Changing the as-of date re-suggests the window; a plain refresh keeps the
+  // one that was on screen.
+  if(restoreWindowOnce && prefs.get("winFrom") && prefs.get("winTo")){
+    $("#winFrom").value=prefs.get("winFrom");
+    $("#winTo").value=prefs.get("winTo");
+  } else {
+    applySuggestedWindow();
+  }
+  restoreWindowOnce=false;
   markReady();
 }
 function applySuggestedWindow(){
@@ -825,13 +840,25 @@ function markReady(){
                         : "Not extracted yet — first run takes a few minutes";
 }
 $("#d3").onchange=async()=>{ await initC3Controls($("#d3").value); };
-$("#winReset").onclick=()=>{ applySuggestedWindow(); };
+$("#winReset").onclick=()=>{ applySuggestedWindow(); prefs.set("winFrom",$("#winFrom").value); prefs.set("winTo",$("#winTo").value); };
+$("#winFrom").onchange=()=>prefs.set("winFrom",$("#winFrom").value);
+$("#winTo").onchange=()=>prefs.set("winTo",$("#winTo").value);
 $("#go").onclick=loadC3;
 // Dubai "today": the To picker always defaults to it and cannot exceed it.
 function todayDubai(){
   const p=new Intl.DateTimeFormat("en-CA",{timeZone:"Asia/Dubai",year:"numeric",month:"2-digit",day:"2-digit"}).formatToParts(new Date());
   const g=(t)=>p.find(x=>x.type===t).value; return `${g("year")}-${g("month")}-${g("day")}`;
 }
+// Refreshing the page must not throw away what you were looking at. Which
+// dates and tab you had open are per-browser conveniences, so localStorage is
+// the right home; a private window or blocked storage just falls back to the
+// computed defaults rather than throwing.
+const prefs={
+  get(k,d=null){ try{ const v=localStorage.getItem("acm:"+k); return v===null?d:v; }catch{ return d; } },
+  set(k,v){ try{ localStorage.setItem("acm:"+k,v); }catch{ /* storage unavailable */ } },
+};
+function saveD5(){ prefs.set("d5from",$("#d5from").value); prefs.set("d5to",$("#d5to").value); }
+
 let datesReady=false;
 async function initDates(){
   const {dates}=await (await fetch("/api/dates")).json();
@@ -848,8 +875,12 @@ async function initDates(){
   // Only choose defaults ONCE. Re-running this on every live message was
   // resetting the pickers to today and wiping the user's selection.
   if(!datesReady){
-    $("#d5to").value=today;
-    $("#d5from").value=latestWithData;
+    // A range the user picked before a refresh wins, as long as it is still
+    // reachable. Anything out of bounds falls back to the computed default.
+    const sf=prefs.get("d5from"), st=prefs.get("d5to");
+    const ok=(d)=>d&&d>=min&&d<=today;
+    if(ok(sf)&&ok(st)&&sf<=st){ $("#d5from").value=sf; $("#d5to").value=st; }
+    else { $("#d5to").value=today; $("#d5from").value=latestWithData; saveD5(); }
     datesReady=true;
   }
   $("#d5today").textContent="Today";
@@ -857,9 +888,9 @@ async function initDates(){
 }
 
 // Keep the range sane: From must not be after To.
-$("#d5from").onchange=()=>{ if($("#d5from").value>$("#d5to").value) $("#d5to").value=$("#d5from").value; loadC5(); };
-$("#d5to").onchange=()=>{ if($("#d5to").value<$("#d5from").value) $("#d5from").value=$("#d5to").value; loadC5(); };
-$("#d5today").onclick=()=>{ const t=todayDubai(); $("#d5from").value=t; $("#d5to").value=t; loadC5(); };
+$("#d5from").onchange=()=>{ if($("#d5from").value>$("#d5to").value) $("#d5to").value=$("#d5from").value; saveD5(); loadC5(); };
+$("#d5to").onchange=()=>{ if($("#d5to").value<$("#d5from").value) $("#d5from").value=$("#d5to").value; saveD5(); loadC5(); };
+$("#d5today").onclick=()=>{ const t=todayDubai(); $("#d5from").value=t; $("#d5to").value=t; saveD5(); loadC5(); };
 
 // the owner: "any UI I can extract from should be fine" — so the current view is
 // downloadable as CSV (rows) plus the WhatsApp-ready text.
@@ -946,10 +977,14 @@ $("#send").onclick=async(e)=>{
 
 (async()=>{
   await initDates();
+  // Come back to the tab that was open, not always C5.
+  const savedTab=prefs.get("tab","c5");
+  if(["c5","c3","mx","wa"].includes(savedTab)&&savedTab!=="c5") show(savedTab);
   await loadC5();
   waPoll();
 
   await initC3Controls();
+  if(savedTab==="c3"||savedTab==="mx") await loadC3();
 })();
 </script>
 </body>
