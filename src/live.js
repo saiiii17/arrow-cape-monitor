@@ -111,6 +111,24 @@ function containerMemory() {
 }
 const WATCH_FILE = path.join(__dirname, "..", "data", "watched-groups.json");
 
+// Whether an account is linked is OUR fact, not something to infer from disk.
+// It used to be read as "the chromium profile directory exists", but simply
+// showing a QR creates that directory -- and its whatsapp IndexedDB -- so the
+// app decided it was linked with nobody logged in, and served "saved WhatsApp
+// data" instead of the owner's exports after a reset. This flag is written when a
+// session actually authenticates and removed when it is torn down.
+const LINKED_FLAG = path.join(__dirname, "..", "data", "linked.flag");
+function markLinked(on) {
+  try {
+    if (on) { fs.mkdirSync(path.dirname(LINKED_FLAG), { recursive: true }); fs.writeFileSync(LINKED_FLAG, new Date().toISOString()); }
+    else fs.rmSync(LINKED_FLAG, { force: true });
+  } catch { /* best effort: the env var is still authoritative in-process */ }
+  process.env.WA_LINKED = on ? "1" : "";
+}
+function wasLinked() {
+  try { return fs.existsSync(LINKED_FLAG); } catch { return false; }
+}
+
 // The chosen groups must survive a server restart, or captured messages become
 // unreachable: the pipelines look them up by group name.
 function loadWatched() {
@@ -295,7 +313,7 @@ function start({ fresh = false } = {}) {
     state.claimedSession = false;
     state.conflictStreak = 0;
     state.reclaimRestart = false;
-    process.env.WA_LINKED = "";
+    markLinked(false);
     process.env.WA_CONNECTED = "";
     state.steps = [];
     step("Cleared previous session — requesting a new QR…");
@@ -310,9 +328,11 @@ function start({ fresh = false } = {}) {
   state.abandoned = false;
   state.conflictStreak = 0;
   state.startedAt = Date.now();
-  // A stored session means this account is linked even before it finishes
-  // loading, so the sample must not flash on screen meanwhile.
-  if (fs.existsSync(PROFILE_DIR)) process.env.WA_LINKED = "1";
+  // A session that genuinely authenticated before means this account is linked
+  // even while it is still loading, so the sample must not flash on screen
+  // meanwhile. A profile directory on its own proves nothing -- showing a QR
+  // creates one.
+  if (wasLinked()) process.env.WA_LINKED = "1";
   state.abandoned = false;
   step("Launching WhatsApp Web…");
 
@@ -480,7 +500,7 @@ function start({ fresh = false } = {}) {
     supervisor.event("authenticated");
     clearTimeout(state.qrStaleTimer);
     state.status = "authenticated";
-    process.env.WA_LINKED = "1"; // from here on, sample data is never shown
+    markLinked(true); // from here on, sample data is never shown
     state.qrDataUrl = null;
     state.authAt = Date.now();
     step("Authenticated — loading WhatsApp Web (usually 10–40s)…");
@@ -522,7 +542,7 @@ function start({ fresh = false } = {}) {
     clearTimeout(state.startTimer);
     clearInterval(state.authWatchdog);
     state.status = "ready";
-    process.env.WA_LINKED = "1";
+    markLinked(true);
     state.qrDataUrl = null;
     state.reclaims = 0;
     state.crashes = 0;
@@ -1025,7 +1045,7 @@ function logout({ unlink = true, wipe = false, clearData = false } = {}) {
   state.syncing = false;
   state.lastSync = null;
   clearInterval(state.authWatchdog);
-  process.env.WA_LINKED = "";
+  markLinked(false);
   process.env.WA_CONNECTED = ""; // sample data may show again once unlinked
   step("Not connected");
 

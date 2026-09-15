@@ -19,3 +19,4 @@ _chat 2.txt
 # os / editor
 .DS_Store
 *.log
+data/linked.flag

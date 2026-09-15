@@ -80,6 +80,15 @@ const sleep = (ms) => new Promise(r => setTimeout(r, ms));
   ok("the owner's export data is back after unlink", (d.dates || []).length > 300,
      `only ${(d.dates || []).length} days available`);
 
+  // And it must be the EXPORTS, not an empty live store wearing their label.
+  // This is what the earlier "profile directory exists therefore we are
+  // linked" check got wrong: merely showing a QR creates that directory, so
+  // an unlinked app served "saved WhatsApp data" and no messages at all.
+  const dig = await get("/api/digest?from=2026-09-01&to=2026-09-03");
+  const label = dig.sourceLabel || dig.source || "";
+  ok("the source really is the owner's exports, not an empty live store",
+     /exports|sample/i.test(label), `source reported as "${label}"`);
+
   // And a connect straight after an unlink must still start cleanly.
   await post("/api/wa/start");
   await sleep(4000);

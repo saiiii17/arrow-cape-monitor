@@ -339,7 +339,9 @@ for (const sig of ["SIGINT", "SIGTERM"]) {
 // user should never see "browser is already running".
 // A stored WhatsApp profile means an account is linked: never show sample data
 // for it, even before the browser is started again.
-if (fs.existsSync(path.join(__dirname, "..", ".wwebjs_auth", "session-monitor"))) process.env.WA_LINKED = "1";
+// A chromium profile on disk is not a login -- showing a QR creates one. Only
+// a session that actually authenticated leaves this marker behind.
+if (fs.existsSync(path.join(__dirname, "..", "data", "linked.flag"))) process.env.WA_LINKED = "1";
 
 // Re-apply the saved group selection so captured messages are found after a
 // restart, without needing the WhatsApp tab to be opened first.
