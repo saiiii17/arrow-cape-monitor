@@ -83,10 +83,11 @@
   #pop{position:fixed;z-index:60;max-width:460px;background:var(--panel);color:var(--ink);
     border:1px solid var(--line);border-radius:10px;box-shadow:0 8px 30px rgba(0,0,0,.28);
     padding:10px 12px;opacity:0;pointer-events:none;transition:opacity .12s}
-  /* Never interactive. At 460x275 over 34px rows it blankets whatever is
-     under it, and an interactive popover swallows those rows' mouseenter --
-     the popover then sits there showing a stale message while the cursor
-     moves. Reading a long message is what double-click-to-pin is for. */
+  /* Interactive only when it is clear of the rows -- see setPopInteractive.
+     Sitting on top of the list AND accepting the pointer is what swallowed
+     the rows' mouseenter and left a stale message on screen. */
+  #pop.reachable{pointer-events:auto}
+  #pop.reachable pre{cursor:auto}
   #pop.show{opacity:1}
   #pop .ph{font-family:var(--mono);font-size:11px;color:var(--faint);margin-bottom:6px;
     display:flex;gap:8px;align-items:baseline}
@@ -650,6 +651,26 @@ function placePop(pop,ev,owner){
   let y=r?r.top:ev.clientY+pad;
   y=Math.min(Math.max(8,y),Math.max(8,innerHeight-h-8));
   pop.style.left=Math.round(x)+"px"; pop.style.top=Math.round(y)+"px";
+  setPopInteractive(pop,owner);
+}
+
+// A long message needs scrolling, which needs the pointer -- but a popover
+// that both covers the rows and accepts the pointer steals their mouseenter
+// and strands a stale message on screen. So it becomes interactive only when
+// it is genuinely clear of the list it was opened from; when the window is
+// too narrow for that it stays inert and double-click still pins the row.
+function setPopInteractive(pop,owner){
+  const host=owner&&owner.closest&&(owner.closest("table")||owner.closest(".card"));
+  const scrolls=pop.querySelector("pre").scrollHeight>pop.querySelector("pre").clientHeight+2;
+  let clear=false;
+  if(host){
+    const a=pop.getBoundingClientRect(), b=host.getBoundingClientRect();
+    clear=a.right<=b.left+1||a.left>=b.right-1||a.bottom<=b.top+1||a.top>=b.bottom-1;
+  }
+  pop.classList.toggle("reachable", clear && scrolls);
+  pop.querySelector(".hint").textContent = clear&&scrolls
+    ? "scroll to read more · double-click the row to pin it"
+    : "double-click the row to pin it open";
 }
 
 // `owner` identifies the row, so re-entering the same one does not rebuild it.
@@ -668,6 +689,9 @@ function showPop(ev,when,who,body,owner){
   requestAnimationFrame(()=>pop.classList.add("show"));
 }
 
+$("#pop").onmouseenter=()=>{ if($("#pop").classList.contains("reachable")){ clearTimeout(popTimer); popTimer=null; } };
+$("#pop").onmouseleave=()=>{ if($("#pop").classList.contains("reachable")) hidePop(); };
+
 // Leaving the row starts a short grace period rather than closing at once, so
 // the cursor can travel the 14px gap onto the popover itself.
 function hidePop(){
@@ -675,7 +699,7 @@ function hidePop(){
   popTimer=setTimeout(()=>{
     const p=$("#pop");
     p.classList.remove("show");
-    popTimer=setTimeout(()=>{ p.hidden=true; popOwner=null; },140);
+    popTimer=setTimeout(()=>{ p.hidden=true; p.classList.remove("reachable"); popOwner=null; },140);
   },140);
 }
 

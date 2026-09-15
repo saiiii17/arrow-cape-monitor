@@ -10,6 +10,7 @@
     "send": "node src/send-daily.js",
     "test": "node src/test-extract.js && node src/c3/test-c3.js && node src/test-source.js && node src/test-supervisor.js",
     "test:ui": "node src/test-ui.js",
+    "test:lifecycle": "node src/test-lifecycle.js",
     "c3": "node src/c3/cli.js",
     "c3:compare": "node src/c3/compare.js"
   },

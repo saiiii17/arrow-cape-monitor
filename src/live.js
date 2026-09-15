@@ -19,6 +19,22 @@ const DEAD_PAGE = /detached Frame|Target closed|Session closed|Execution context
 
 const { createSupervisor } = require("./wa-supervisor");
 
+// Connect / Unlink / Force reset are the primary feature: they have to work
+// on the 1200th press as reliably as the first. The reason they did not is
+// that every one of them leaves asynchronous work behind -- a destroy(), a
+// logout(), and a pkill -9 on the profile directory that lands up to twelve
+// seconds later. Press Connect inside that window and the PREVIOUS unlink's
+// cleanup kills the browser the new one just launched, which is the SIGKILL
+// that preceded "Cannot read properties of null (reading 'Socket')".
+//
+// So every lifecycle operation takes a generation. Work scheduled by an
+// operation checks whether it is still the current one before touching
+// anything shared; the moment a newer operation starts, the older one's
+// pending teardown becomes inert instead of destructive.
+let generation = 0;
+const bumpGeneration = () => ++generation;
+const isCurrent = (gen) => gen === generation;
+
 // One arbiter for every teardown in this file. Watchdogs report to it; it
 // alone decides. See src/wa-supervisor.js for why.
 const supervisor = createSupervisor();
@@ -136,11 +152,18 @@ function clearStaleProfileLock() {
   };
   if (count() > 0) {
     try { execFileSync("pkill", ["-9", "-f", "--", pattern], { stdio: "ignore" }); } catch { /* gone */ }
-    // Synchronous wait (max ~2s) for the kernel to reap them.
+    // Wait (max ~2s) for the kernel to reap them. This blocks deliberately --
+    // the next launch must not start while the profile is still held -- but it
+    // blocks Node's event loop too, so it must be cheap. Spawning /bin/sleep
+    // twenty times per call was not: under repeated Connect/Reset presses the
+    // spawns queued every other request behind them and pushed responses past
+    // seven seconds. Atomics.wait sleeps the thread without spawning anything.
+    const nap = (() => {
+      const sab = new Int32Array(new SharedArrayBuffer(4));
+      return (ms) => { try { Atomics.wait(sab, 0, 0, ms); } catch { /* fall through */ } };
+    })();
     const deadline = Date.now() + 2000;
-    while (count() > 0 && Date.now() < deadline) {
-      try { execFileSync("sleep", ["0.1"], { stdio: "ignore" }); } catch { break; }
-    }
+    while (count() > 0 && Date.now() < deadline) nap(100);
     cleared.push(count() === 0 ? "orphaned chrome" : "orphaned chrome (some survived)");
   }
   for (const f of ["SingletonLock", "SingletonCookie", "SingletonSocket"]) {
@@ -247,7 +270,14 @@ function start({ fresh = false } = {}) {
     // An operator pressing Connect has waited out any lockout and is entitled
     // to a clean slate, including the restart circuit breaker.
     supervisor.reset();
-    if (client) { const c = client; client = null; Promise.resolve().then(() => c.destroy()).catch(() => {}); }
+    const fgen = bumpGeneration();
+    if (client) {
+      const c = client; client = null;
+      // Guarded for the same reason as logout's: this resolves seconds later.
+      Promise.resolve().then(() => c.destroy()).catch(() => {}).then(() => {
+        if (isCurrent(fgen)) clearStaleProfileLock();
+      });
+    }
     clearTimeout(state.startTimer);
     clearInterval(state.claimTimer);
     clearInterval(state.authWatchdog);
@@ -303,6 +333,16 @@ function start({ fresh = false } = {}) {
   // had no effect (WhatsApp Web self-updates past it) and cost a GitHub fetch on
   // every connect, which stalled reconnects. Set WA_VERSION to re-enable it.
   const waVersion = process.env.WA_VERSION || "";
+
+  const gen = bumpGeneration();
+  // Every handler registered below is inert once a newer operation begins. A
+  // killed browser keeps emitting for a while, and those late events used to
+  // mutate the state of the client that had already replaced it.
+  const bindGuarded = (c) => {
+    const raw = c.on.bind(c);
+    c.on = (ev, fn) => raw(ev, (...a) => { if (!isCurrent(gen)) return; return fn(...a); });
+    return c;
+  };
 
   client = new Client({
     // WWEBJS_PATH lets the login live on a persistent disk in the cloud (paid
@@ -376,6 +416,7 @@ function start({ fresh = false } = {}) {
       ],
     },
   });
+  bindGuarded(client);
 
   client.on("qr", async (qr) => {
     clearTimeout(state.startTimer);
@@ -622,6 +663,8 @@ function start({ fresh = false } = {}) {
   startClaimLoop(3000);
 
   client.initialize().catch(async (e) => {
+    // Superseded before it ever came up: not an error anyone needs to see.
+    if (!isCurrent(gen)) return;
     // A page reload during start-up destroys the init context. ONE restart
     // recovers it; anything more is thrash, so it is hard-capped at one.
     const contextLost = /Execution context was destroyed|Protocol error|Target closed|Session closed/i.test(e.message || "");
@@ -631,6 +674,15 @@ function start({ fresh = false } = {}) {
       state.reclaimRestart = true;
       step("Page reloaded during start-up — restarting once", "warn");
       relaunch("execution context lost during start-up", { force: true });
+      return;
+    }
+    // whatsapp-web.js failing to find its injected Store: the page it
+    // attached to went away mid-injection, which is what a racing teardown
+    // does. Transient by nature -- pressing Connect again always fixed it, so
+    // do that automatically instead of showing the user a null-property error.
+    if (/reading 'Socket'|reading "Socket"|Store is not defined|window\.Store/i.test(e.message || "")) {
+      step("Start-up raced a previous session — retrying", "warn");
+      relaunch("store injection raced a teardown", { force: true, delay: 1500 });
       return;
     }
     // Self-heal the most common failure instead of asking for a terminal.
@@ -874,6 +926,7 @@ function snapshot() {
 function hardStop() {
   const c = client;
   client = null;
+  bumpGeneration(); // anything the old client still emits is now ignored
   clearTimeout(state.startTimer);
   clearTimeout(state.qrStaleTimer);
   clearInterval(state.claimTimer);
@@ -944,13 +997,19 @@ function logout({ unlink = true, wipe = false, clearData = false } = {}) {
   }
 
   // Background teardown -- never awaited, so the HTTP response is instant.
+  // Every destructive step re-checks the generation first: by the time these
+  // resolve the user may already have pressed Connect, and killing the
+  // profile then takes down the browser they are waiting on.
+  const gen = bumpGeneration();
   (async () => {
     const withTimeout = (fn, ms) => Promise.race([Promise.resolve().then(fn).catch(() => {}), new Promise((r) => setTimeout(r, ms))]);
     if (c) {
       if (unlink) await withTimeout(() => c.logout(), 6000);
       await withTimeout(() => c.destroy(), 6000);
     }
+    if (!isCurrent(gen)) return; // a newer Connect owns the profile now
     if (wipe) wipeSession();
+    if (!isCurrent(gen)) return;
     clearStaleProfileLock(); // belt-and-braces: release the profile lock
   })().catch(() => {});
 }

@@ -197,6 +197,41 @@ const val = (p, s) => p.$eval(s, (e) => e.value);
     for (let i = 0; i < 6 && i < rows.length; i++) { await rows[i].hover(); await new Promise(r => setTimeout(r, 60)); }
     await new Promise(r => setTimeout(r, 400));
     ok("survives a fast sweep across rows", await vis() && (await pbody()).length > 0);
+
+    console.log("\nlong messages can be scrolled");
+    // Forced so the path is exercised on any dataset: a popover that overflows
+    // must become interactive, must survive the cursor moving onto it, must
+    // actually scroll -- and must STILL not block the rows underneath.
+    await p.addStyleTag({ content: "#pop pre{max-height:60px !important}" });
+    await p.mouse.move(5, 5);
+    await new Promise(r => setTimeout(r, 600));
+    await rows[0].hover();
+    await new Promise(r => setTimeout(r, 350));
+    const sc = await p.evaluate(() => {
+      const e = document.querySelector("#pop pre"), pop = document.querySelector("#pop");
+      return { scrolls: e.scrollHeight > e.clientHeight + 2, reachable: pop.classList.contains("reachable") };
+    });
+    ok("an overflowing message is marked scrollable", sc.scrolls && sc.reachable,
+       `scrolls=${sc.scrolls} reachable=${sc.reachable}`);
+
+    const pc = await p.evaluate(() => { const r = document.querySelector("#pop").getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; });
+    await p.mouse.move(pc.x, pc.y);
+    await new Promise(r => setTimeout(r, 450));
+    ok("stays open while the cursor is on it", await vis());
+
+    await p.mouse.wheel({ deltaY: 100 });
+    await new Promise(r => setTimeout(r, 350));
+    ok("the message actually scrolls", await p.evaluate(() => document.querySelector("#pop pre").scrollTop) > 0);
+
+    await p.mouse.move(5, 5);
+    await new Promise(r => setTimeout(r, 700));
+    const reach = new Set();
+    for (let i = 0; i < Math.min(4, rows.length); i++) {
+      await rows[i].hover(); await new Promise(r => setTimeout(r, 240));
+      reach.add(await pbody());
+    }
+    ok("rows underneath stay reachable even when it is interactive", reach.size >= 3,
+       `only ${reach.size} distinct messages across 4 rows`);
   }
 
   console.log("\nno JS errors");

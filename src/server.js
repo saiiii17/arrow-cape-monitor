@@ -252,8 +252,12 @@ const server = http.createServer(async (req, res) => {
     // Keep the login; guarantee the browser and its profile lock are gone so
     // the next Connect cannot hang on a leftover process.
     live.logout({ unlink: false });
-    const cleared = live.clearStaleProfileLock();
-    return json(res, 200, { ...live.snapshot(), cleared });
+    // Killing the profile can block for up to two seconds waiting on the
+    // kernel. The caller does not need to wait for that -- logout() has
+    // already reset the state the UI reads, and the cleanup is generation
+    // guarded, so a Connect pressed in the meantime is not affected by it.
+    setImmediate(() => { try { live.clearStaleProfileLock(); } catch { /* best effort */ } });
+    return json(res, 200, { ...live.snapshot(), cleared: ["clearing browser profile"] });
   }
 
   if (url.pathname === "/api/wa/logout" && req.method === "POST") {
