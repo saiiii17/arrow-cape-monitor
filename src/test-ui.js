@@ -93,6 +93,59 @@ const val = (p, s) => p.$eval(s, (e) => e.value);
     ok(`${label} tab shows content`, shown);
   }
 
+  console.log("\nrapid interaction (stale responses)");
+  // The C5 controls are hidden on other tabs, so make sure we are on C5.
+  await p.click("#tab-c5");
+  await new Promise(r => setTimeout(r, 700));
+  // The reported glitch: on a slow connection an earlier request lands last
+  // and paints over the newer one, so the screen shows a different day than
+  // the filter above it. Forced here by delaying the first digest call.
+  {
+    let n = 0;
+    await p.setRequestInterception(true);
+    const handler = async (req) => {
+      if (req.url().includes("/api/digest")) { n++; if (n === 1) await new Promise(r => setTimeout(r, 1500)); }
+      req.continue();
+    };
+    p.on("request", handler);
+
+    await p.click("#d5dbef");
+    await new Promise(r => setTimeout(r, 200));
+    await p.click("#d5today");
+    await new Promise(r => setTimeout(r, 3200));
+    const picked = await val(p, "#d5from");
+    const meta = await p.$eval("#meta5", (e) => e.textContent);
+    ok("a slow earlier response cannot overwrite a newer one", meta.includes(picked),
+       `pickers say ${picked}, screen says ${meta.slice(0, 60)}`);
+
+    p.off("request", handler);
+    await p.setRequestInterception(false);
+  }
+
+  // Mashing the shortcuts must settle somewhere coherent.
+  for (let i = 0; i < 9; i++) { await p.click(["#d5today","#d5yday","#d5dbef"][i % 3]); await new Promise(r => setTimeout(r, 40)); }
+  await new Promise(r => setTimeout(r, 2000));
+  const mf = await val(p, "#d5from"), mt = await val(p, "#d5to");
+  ok("mashing shortcuts leaves a single-day range", mf === mt, `${mf}..${mt}`);
+  ok("exactly one shortcut lit after mashing", await p.$$eval(".btn.quick.on", (e) => e.length) === 1);
+  ok("screen agrees with the pickers after mashing", (await p.$eval("#meta5", (e) => e.textContent)).includes(mf));
+
+  console.log("\nleft open past Dubai midnight");
+  // the owner will leave this open overnight. The pickers' max was stamped once at
+  // load, so after the date rolled over "Today" produced an out-of-range value.
+  {
+    const r = await p.evaluate(() => {
+      const from = document.querySelector("#d5from"), to = document.querySelector("#d5to");
+      const d = new Date(`${todayDubai()}T12:00:00Z`); d.setUTCDate(d.getUTCDate() - 1);
+      const yest = d.toISOString().slice(0, 10);
+      from.max = yest; to.max = yest; knownDay = yest;   // as if loaded before midnight
+      document.querySelector("#d5today").click();
+      return { valid: from.checkValidity() && to.checkValidity(), got: from.value, max: to.max };
+    });
+    await new Promise(r => setTimeout(r, 1200));
+    ok("Today stays in range after the date rolls over", r.valid, `max=${r.max} but Today set ${r.got}`);
+  }
+
   console.log("\nhover popover");
   await p.click("#tab-c3");
   await new Promise(r => setTimeout(r, 3000));

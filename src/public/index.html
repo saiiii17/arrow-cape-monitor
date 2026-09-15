@@ -317,6 +317,15 @@ const ACCTS = ["RIO","FMG","BHP"];
 let c5 = null, c3 = null, view = "c5";
 
 const toast = (m) => { const t=$("#toast"); t.textContent=m; t.classList.add("show"); setTimeout(()=>t.classList.remove("show"),2600); };
+// Every async loader races itself. Click two dates in quick succession -- or
+// work on a connection where one request is slower than the next -- and the
+// earlier response can land last and paint itself over the newer one, leaving
+// the screen showing a different day than the filter above it says. Each
+// loader takes a ticket; only the newest ticket may render.
+const seq={};
+const ticket=(name)=>(seq[name]=(seq[name]||0)+1);
+const stale=(name,t)=>seq[name]!==t;
+
 const el = (tag, cls, txt) => { const e=document.createElement(tag); if(cls)e.className=cls; if(txt!=null)e.textContent=txt; return e; };
 const money = (n) => typeof n === "number" ? "$"+n.toFixed(2) : null;
 
@@ -449,6 +458,7 @@ async function waPoll(){
   clearInterval(waTimer);
   const tick=async()=>{
     try{
+      ensureToday();
       const st=await (await fetch("/api/wa/status")).json();
       if(view==="wa") waRender(st);
       const bd=$("#brandLive"); if(bd) bd.hidden=!st.connected;
@@ -821,9 +831,12 @@ async function loadC5(){
   if(!from||!to) return;
   // Always the range endpoint: a calendar lets you pick a day with no traffic,
   // and the range form filters those out instead of erroring.
+  const t=ticket("c5");
   $("#meta5").innerHTML='<span class="spin"></span>loading…';
   brief=null; $("#brief").textContent="Press Rebuild to generate."; $("#briefMeta").textContent="";
-  renderC5(await (await fetch(`/api/digest?from=${from}&to=${to}`)).json());
+  const d=await (await fetch(`/api/digest?from=${from}&to=${to}`)).json();
+  if(stale("c5",t)) return; // a newer range is already loading
+  renderC5(d);
 }
 async function loadC3(){
   const host=$("#matches"); host.innerHTML="";
@@ -835,23 +848,28 @@ async function loadC3(){
     p.set("windowFrom",$("#winFrom").value);
     p.set("windowTo",$("#winTo").value);
   }
+  const t=ticket("c3");
   try{
     const r=await fetch("/api/c3?"+p.toString());
     const d=await r.json();
+    if(stale("c3",t)) return; // a newer as-of date or window is already loading
     if(d.error){ $("#meta3").textContent="Failed: "+d.error; host.innerHTML=""; return; }
     if(d.empty || (!d.cargo.length && !d.tonnage.length && (d.source||"").indexOf("saved")<0 && (d.source||"").indexOf("live")<0)){
       $("#meta3").textContent=d.source||"No C3 data yet — connect WhatsApp and pull history";
     }
     renderC3(d);
-  }catch(e){ $("#meta3").textContent="Failed: "+e.message; }
+  }catch(e){ if(!stale("c3",t)) $("#meta3").textContent="Failed: "+e.message; }
 }
 // Everything on the C3 bar comes from the data: the day range, which days are
 // already extracted, and the window the desk itself is quoting.
 let c3Meta=null;
 let restoreWindowOnce=true;
 async function initC3Controls(asOf){
+  const t=ticket("c3meta");
   const q = asOf ? `?date=${asOf}` : "";
-  c3Meta = await (await fetch("/api/c3/meta"+q)).json();
+  const meta = await (await fetch("/api/c3/meta"+q)).json();
+  if(stale("c3meta",t)) return; // a newer as-of date is already being set up
+  c3Meta = meta;
   const d3=$("#d3");
   // As-of can be any day up to today; default to the latest day with data.
   d3.min=c3Meta.first; d3.max=todayDubai();
@@ -917,6 +935,7 @@ async function initDates(){
   const yearAgo=new Date(Date.now()-365*864e5).toISOString().slice(0,10);
   const min=(dates[0]&&dates[0]<yearAgo)?dates[0]:yearAgo;
   for(const sel of [$("#d5from"),$("#d5to")]){ sel.min=min; sel.max=today; }
+  knownDay=today;
 
   // Only choose defaults ONCE. Re-running this on every live message was
   // resetting the pickers to today and wiping the user's selection.
@@ -938,7 +957,35 @@ $("#d5to").onchange=()=>{ if($("#d5to").value<$("#d5from").value) $("#d5from").v
 
 // One-click days, counted back from Dubai today rather than the browser's.
 function dayBack(n){ const d=new Date(`${todayDubai()}T12:00:00Z`); d.setUTCDate(d.getUTCDate()-n); return d.toISOString().slice(0,10); }
-function pickDay(n){ const d=dayBack(n); $("#d5from").value=d; $("#d5to").value=d; saveD5(); markQuick(); loadC5(); }
+
+// This dashboard is meant to be left open, and Dubai's date rolls over while
+// it is. The pickers' max was set once at load, so after midnight "Today"
+// produced a date beyond it and the input went invalid. Re-stamp the bounds
+// whenever the day actually changes, and carry a selected shortcut forward so
+// an overnight screen is showing the new day, not yesterday's.
+let knownDay=null;
+function ensureToday(){
+  const t=todayDubai();
+  if(t===knownDay) return false;
+  const rolled=knownDay!==null;
+  knownDay=t;
+  for(const sel of [$("#d5from"),$("#d5to")]) sel.max=t;
+  const d3=$("#d3"); if(d3) d3.max=t;
+  if(rolled){
+    // Whichever shortcut was showing should keep meaning what it says.
+    const on=[["#d5today",0],["#d5yday",1],["#d5dbef",2]].find(([id])=>$(id).classList.contains("on"));
+    if(on) { pickDay(on[1]); return true; }
+  }
+  markQuick();
+  return rolled;
+}
+
+function pickDay(n){
+  ensureToday(); // never set a value against bounds captured on a previous day
+  const d=dayBack(n);
+  $("#d5from").value=d; $("#d5to").value=d;
+  saveD5(); markQuick(); loadC5();
+}
 $("#d5today").onclick=()=>pickDay(0);
 $("#d5yday").onclick=()=>pickDay(1);
 $("#d5dbef").onclick=()=>pickDay(2);
@@ -989,10 +1036,12 @@ let brief=null;
 async function loadBrief(){
   const from=$("#d5from").value, to=$("#d5to").value;
   if(!from||!to) return;
+  const t=ticket("brief");
   $("#brief").innerHTML='<span class="spin"></span>Building… (a few seconds)';
   $("#briefMeta").textContent="";
   try{
     const r=await (await fetch(`/api/digest/brief?from=${from}&to=${to}`)).json();
+    if(stale("brief",t)) return; // the range moved on while this was building
     if(r.error){ $("#brief").textContent="Failed: "+r.error; return; }
     brief=r;
     $("#brief").textContent=r.text;
@@ -1000,7 +1049,7 @@ async function loadBrief(){
     $("#briefMeta").textContent = unver
       ? `${unver} account(s) shown verbatim — summary failed verification`
       : "all figures verified against the original messages";
-  }catch(e){ $("#brief").textContent="Failed: "+e.message; }
+  }catch(e){ if(!stale("brief",t)) $("#brief").textContent="Failed: "+e.message; }
 }
 $("#briefRun").onclick=loadBrief;
 $("#briefCopy").onclick=async()=>{
