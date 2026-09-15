@@ -59,6 +59,31 @@ const val = (p, s) => p.$eval(s, (e) => e.value);
   ok("To cannot exceed today", max === new Intl.DateTimeFormat("en-CA",{timeZone:"Asia/Dubai"}).format(new Date()), max);
   ok("a full year is browsable", min <= new Date(Date.now()-360*864e5).toISOString().slice(0,10), `min=${min}`);
 
+  console.log("\nquick day shortcuts");
+  await p.evaluate(() => localStorage.clear());
+  await p.reload({ waitUntil: "networkidle0" });
+  await new Promise(r => setTimeout(r, 1200));
+  const dubaiToday = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Dubai" }).format(new Date());
+  const back = (n) => { const d = new Date(`${dubaiToday}T12:00:00Z`); d.setUTCDate(d.getUTCDate() - n); return d.toISOString().slice(0, 10); };
+  for (const [id, n, label] of [["#d5today", 0, "Today"], ["#d5yday", 1, "Yesterday"], ["#d5dbef", 2, "Day before"]]) {
+    await p.click(id);
+    await new Promise(r => setTimeout(r, 700));
+    const f = await val(p, "#d5from"), t = await val(p, "#d5to");
+    ok(`${label} sets both pickers to ${back(n)}`, f === back(n) && t === back(n), `got ${f}..${t}`);
+    const lit = await p.$eval(id, (e) => e.classList.contains("on"));
+    ok(`${label} shows as selected`, lit);
+  }
+  // Only one shortcut may be lit at a time.
+  const litCount = await p.$$eval(".btn.quick.on", (els) => els.length);
+  ok("exactly one shortcut is highlighted", litCount === 1, `${litCount} lit`);
+
+  // A shortcut choice is a choice -- it must survive a refresh like any other.
+  await p.click("#d5yday");
+  await new Promise(r => setTimeout(r, 600));
+  await p.reload({ waitUntil: "networkidle0" });
+  await new Promise(r => setTimeout(r, 1200));
+  ok("a shortcut choice survives a refresh", await val(p, "#d5from") === back(1));
+
   console.log("\nevery tab renders");
   for (const [id, label] of [["#tab-c5","C5"],["#tab-c3","C3"],["#tab-mx","Matches"],["#tab-wa","WhatsApp"]]) {
     await p.click(id);

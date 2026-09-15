@@ -1,8 +1,10 @@
 // The ONE decision about where messages come from, shared by the C5 and C3
 // pipelines so they can never disagree.
 //
-//   live WhatsApp store has messages for the configured group  -> live ONLY
-//   otherwise                                                   -> sample export
+//   a WhatsApp account is linked  -> that account's live messages, ONLY
+//   nothing linked                -> the owner's sample exports, so the dashboard
+//                                    has something real to show before anyone
+//                                    scans a QR
 //
 // The sample exports are the owner's historical chats, used as demo fixtures. They
 // must never be mixed with a linked account's data: merging them is what put
@@ -21,7 +23,11 @@ function resolve(exported, group) {
   if (forced === "sample") return { messages: exported, source: "sample", group: null };
 
   const live = group ? loadLive(group) : [];
-  if (linked() || live.length) {
+  // Being linked is the whole test. A previous session's captured messages
+  // must not stand in for the exports once that account is gone -- before
+  // connecting, the dashboard shows the owner's own history, not a stale echo of
+  // whoever linked last.
+  if (linked()) {
     return {
       messages: live.slice().sort((a, b) => (a.date === b.date ? a.minutes - b.minutes : a.date < b.date ? -1 : 1)),
       source: "live",

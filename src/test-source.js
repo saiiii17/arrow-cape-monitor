@@ -43,25 +43,37 @@ test("linked with no messages yet -> live (empty), never sample", () => {
   process.env.WA_CONNECTED = "";
 });
 
-test("saved data while offline is labelled 'not connected', never 'live'", () => {
+test("before connecting, the owner's exports are shown -- not a previous session's data", () => {
+  // The dashboard must have something real on it before anyone scans a QR,
+  // and a stale echo of whoever linked last is not it.
   process.env.WA_LINKED = ""; process.env.WA_CONNECTED = "";
-  store.set("Work", [{ date: "2026-09-08", time: "22:39", minutes: 1359, sender: "Me", body: "RIO C5" }]);
+  store.set("Work", [{ date: "2026-09-08", time: "22:39", minutes: 1359, sender: "Me", body: "leftover" }]);
   const r = source.resolve(SAMPLE, "Work");
-  const l = source.label(r);
-  assert.ok(/saved \(not connected\)/.test(l), l);
-  assert.ok(!/LIVE/.test(l), l);
-  process.env.WA_CONNECTED = "1";
-  assert.ok(/LIVE/.test(source.label(source.resolve(SAMPLE, "Work"))));
-  process.env.WA_CONNECTED = "";
+  assert.strictEqual(r.source, "sample");
+  assert.strictEqual(r.messages, SAMPLE);
+  assert.ok(!r.messages.some((m) => m.body === "leftover"), "last session's messages must not leak in");
+  assert.ok(/the owner's exports/.test(source.label(r)), source.label(r));
 });
 
-test("live data present -> live only, sample excluded", () => {
-  process.env.WA_LINKED = "";
+test("once linked, live data only -- sample excluded", () => {
+  process.env.WA_LINKED = "1";
   store.set("Work", [{ date: "2026-09-08", time: "16:17", minutes: 977, sender: "Me", body: "RIO C5" }]);
   const r = source.resolve(SAMPLE, "Work");
   assert.strictEqual(r.source, "live");
   assert.strictEqual(r.messages.length, 1);
   assert.ok(!r.messages.some((m) => m.body === "sample"), "sample rows must not leak in");
+  process.env.WA_CONNECTED = "1";
+  assert.ok(/LIVE/.test(source.label(r)), source.label(r));
+  process.env.WA_CONNECTED = ""; process.env.WA_LINKED = "";
+});
+
+test("linked but mid-reconnect is 'saved', never 'LIVE'", () => {
+  process.env.WA_LINKED = "1"; process.env.WA_CONNECTED = "";
+  store.set("Work", [{ date: "2026-09-08", time: "22:39", minutes: 1359, sender: "Me", body: "RIO C5" }]);
+  const l = source.label(source.resolve(SAMPLE, "Work"));
+  assert.ok(/saved \(not connected\)/.test(l), l);
+  assert.ok(!/LIVE/.test(l), l);
+  process.env.WA_LINKED = "";
 });
 
 test("cache namespace differs between sample and each live group", () => {

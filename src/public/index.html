@@ -48,6 +48,8 @@
   input[type="date"]::-webkit-calendar-picker-indicator{filter:invert(.5);cursor:pointer}
   button.btn{cursor:pointer}
   button.btn:hover{border-color:var(--dim)}
+.btn.quick{padding:4px 9px}
+.btn.quick.on{background:var(--accent,#2b6cb0);border-color:var(--accent,#2b6cb0);color:#fff}
   button.primary{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:500}
   button.primary:hover{filter:brightness(1.08)}
   button:disabled{opacity:.45;cursor:default}
@@ -183,7 +185,9 @@
   <div class="ctl" id="ctl-c5">
     <label class="k" for="d5from">From</label><input type="date" id="d5from">
     <label class="k" for="d5to">To</label><input type="date" id="d5to">
-    <button class="btn" id="d5today">Today</button>
+    <button class="btn quick" id="d5today">Today</button>
+    <button class="btn quick" id="d5yday">Yesterday</button>
+    <button class="btn quick" id="d5dbef">Day before</button>
   </div>
   <div class="ctl" id="ctl-c3" hidden>
     <label class="k" for="d3">As of</label><input type="date" id="d3">
@@ -883,14 +887,30 @@ async function initDates(){
     else { $("#d5to").value=today; $("#d5from").value=latestWithData; saveD5(); }
     datesReady=true;
   }
-  $("#d5today").textContent="Today";
-  $("#d5today").title=`Jump to ${today}`;
+  markQuick();
 }
 
 // Keep the range sane: From must not be after To.
-$("#d5from").onchange=()=>{ if($("#d5from").value>$("#d5to").value) $("#d5to").value=$("#d5from").value; saveD5(); loadC5(); };
-$("#d5to").onchange=()=>{ if($("#d5to").value<$("#d5from").value) $("#d5from").value=$("#d5to").value; saveD5(); loadC5(); };
-$("#d5today").onclick=()=>{ const t=todayDubai(); $("#d5from").value=t; $("#d5to").value=t; saveD5(); loadC5(); };
+$("#d5from").onchange=()=>{ if($("#d5from").value>$("#d5to").value) $("#d5to").value=$("#d5from").value; saveD5(); markQuick(); loadC5(); };
+$("#d5to").onchange=()=>{ if($("#d5to").value<$("#d5from").value) $("#d5from").value=$("#d5to").value; saveD5(); markQuick(); loadC5(); };
+
+// One-click days, counted back from Dubai today rather than the browser's.
+function dayBack(n){ const d=new Date(`${todayDubai()}T12:00:00Z`); d.setUTCDate(d.getUTCDate()-n); return d.toISOString().slice(0,10); }
+function pickDay(n){ const d=dayBack(n); $("#d5from").value=d; $("#d5to").value=d; saveD5(); markQuick(); loadC5(); }
+$("#d5today").onclick=()=>pickDay(0);
+$("#d5yday").onclick=()=>pickDay(1);
+$("#d5dbef").onclick=()=>pickDay(2);
+
+// Light up whichever shortcut matches the range on screen, so the buttons
+// read as state and not just as actions.
+function markQuick(){
+  const f=$("#d5from").value, t=$("#d5to").value;
+  for(const [id,n] of [["#d5today",0],["#d5yday",1],["#d5dbef",2]]){
+    const d=dayBack(n);
+    $(id).classList.toggle("on", f===d && t===d);
+    $(id).title=d;
+  }
+}
 
 // the owner: "any UI I can extract from should be fine" — so the current view is
 // downloadable as CSV (rows) plus the WhatsApp-ready text.
