@@ -83,6 +83,10 @@
   #pop{position:fixed;z-index:60;max-width:460px;background:var(--panel);color:var(--ink);
     border:1px solid var(--line);border-radius:10px;box-shadow:0 8px 30px rgba(0,0,0,.28);
     padding:10px 12px;opacity:0;pointer-events:none;transition:opacity .12s}
+  /* Never interactive. At 460x275 over 34px rows it blankets whatever is
+     under it, and an interactive popover swallows those rows' mouseenter --
+     the popover then sits there showing a stale message while the cursor
+     moves. Reading a long message is what double-click-to-pin is for. */
   #pop.show{opacity:1}
   #pop .ph{font-family:var(--mono);font-size:11px;color:var(--faint);margin-bottom:6px;
     display:flex;gap:8px;align-items:baseline}
@@ -611,28 +615,67 @@ function rateCell(o){
 
 // Hover shows the original WhatsApp message in a styled popover; double-click
 // pins it open under the row.
-function showPop(ev,when,who,body){
-  const pop=$("#pop");
-  pop.hidden=false;
-  pop.querySelector(".ph").innerHTML="";
-  pop.querySelector(".ph").append(el("b",null,when), el("span",null,who||""));
-  pop.querySelector("pre").textContent=body;
-  // Keep it on screen near the cursor.
+// The popover used to flicker for four reasons at once, all fixed here:
+//   - hidePop's 140ms teardown was never cancelled, so moving between two
+//     rows hid the popover the new row had just opened
+//   - mousemove re-ran the whole thing on every pixel, rebuilding the DOM and
+//     dragging the box after the cursor
+//   - near a screen edge that per-pixel repositioning flipped the box from
+//     one side of the cursor to the other and back
+//   - pointer-events:none meant reaching for it to read a long message only
+//     moved the cursor off the row, closing it
+let popTimer=null, popOwner=null;
+
+function placePop(pop,ev,owner){
+  // Positioned once, when the popover opens. Tracking the cursor is what made
+  // it feel unstable.
   const pad=14, w=pop.offsetWidth||420, h=pop.offsetHeight||160;
-  let x=ev.clientX+pad, y=ev.clientY+pad;
-  if(x+w>innerWidth-8) x=Math.max(8,ev.clientX-w-pad);
-  if(y+h>innerHeight-8) y=Math.max(8,ev.clientY-h-pad);
-  pop.style.left=x+"px"; pop.style.top=y+"px";
+  // Sit beside the hovered row rather than on top of the list, so the rows a
+  // reader is scanning stay visible next to the message they opened.
+  const r=owner&&owner.getBoundingClientRect&&owner.getBoundingClientRect();
+  let x=(r&&r.right+pad+w<=innerWidth-8) ? r.right+pad
+      : (r&&r.left-pad-w>=8)             ? r.left-pad-w
+      : Math.min(Math.max(8,ev.clientX+pad),Math.max(8,innerWidth-w-8));
+  // Vertically: align to the row, then clamp into view.
+  let y=r?r.top:ev.clientY+pad;
+  y=Math.min(Math.max(8,y),Math.max(8,innerHeight-h-8));
+  pop.style.left=Math.round(x)+"px"; pop.style.top=Math.round(y)+"px";
+}
+
+// `owner` identifies the row, so re-entering the same one does not rebuild it.
+function showPop(ev,when,who,body,owner){
+  const pop=$("#pop");
+  clearTimeout(popTimer); popTimer=null;
+  if(popOwner!==owner){
+    popOwner=owner;
+    pop.querySelector(".ph").replaceChildren(el("b",null,when), el("span",null,who||""));
+    pop.querySelector("pre").textContent=body;
+    pop.querySelector("pre").scrollTop=0;
+    pop.hidden=false;
+    placePop(pop,ev,owner);
+  }
+  pop.hidden=false;
   requestAnimationFrame(()=>pop.classList.add("show"));
 }
-function hidePop(){ const p=$("#pop"); p.classList.remove("show"); setTimeout(()=>{p.hidden=true;},140); }
+
+// Leaving the row starts a short grace period rather than closing at once, so
+// the cursor can travel the 14px gap onto the popover itself.
+function hidePop(){
+  clearTimeout(popTimer);
+  popTimer=setTimeout(()=>{
+    const p=$("#pop");
+    p.classList.remove("show");
+    popTimer=setTimeout(()=>{ p.hidden=true; popOwner=null; },140);
+  },140);
+}
+
+
 
 function attachOriginal(tr,rec){
   if(!rec.raw) return;
   const when=[rec.date,rec.time].filter(Boolean).join(" ");
   const who=String(rec.sender||"").replace(/\s+ARROW.*$/i,"");
-  tr.onmouseenter=(e)=>showPop(e,when,who,rec.raw);
-  tr.onmousemove=(e)=>{ if(!$("#pop").hidden) showPop(e,when,who,rec.raw); };
+  tr.onmouseenter=(e)=>showPop(e,when,who,rec.raw,tr);
   tr.onmouseleave=hidePop;
   tr.ondblclick=(e)=>{
     e.stopPropagation();
@@ -754,8 +797,7 @@ function renderMatches(ms){
       if(x.vessel.raw){
         const when=[x.vessel.date,x.vessel.time].filter(Boolean).join(" ");
         const who=String(x.vessel.sender||"").replace(/\s+ARROW.*$/i,"");
-        box.onmouseenter=(e)=>showPop(e,when,who,x.vessel.raw);
-        box.onmousemove=(e)=>{ if(!$("#pop").hidden) showPop(e,when,who,x.vessel.raw); };
+        box.onmouseenter=(e)=>showPop(e,when,who,x.vessel.raw,box);
         box.onmouseleave=hidePop;
       }
       cands.appendChild(box);

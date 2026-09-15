@@ -6,7 +6,7 @@
 // the date range, the live poll stealing the selection mid-read, dates outside
 // the stored range being unclickable.
 const puppeteer = require("puppeteer");
-const URL = "http://localhost:4321";
+const URL = process.env.UI_TEST_URL || "http://localhost:4321";
 let pass = 0, fail = 0;
 const ok = (n, c, d = "") => { c ? (pass++, console.log(`  ok   ${n}`)) : (fail++, console.log(`  FAIL ${n}${d ? "\n       " + d : ""}`)); };
 const val = (p, s) => p.$eval(s, (e) => e.value);
@@ -14,6 +14,7 @@ const val = (p, s) => p.$eval(s, (e) => e.value);
 (async () => {
   const b = await puppeteer.launch({ headless: true, args: ["--no-sandbox"] });
   const p = await b.newPage();
+  await p.setViewport({ width: 1440, height: 900 });
   const errs = [];
   p.on("pageerror", (e) => errs.push(e.message));
   p.on("console", (m) => m.type() === "error" && errs.push(m.text()));
@@ -90,6 +91,59 @@ const val = (p, s) => p.$eval(s, (e) => e.value);
     await new Promise(r => setTimeout(r, 900));
     const shown = await p.$eval(id.replace("#tab-", "#v-"), (e) => !e.hidden && e.offsetHeight > 0);
     ok(`${label} tab shows content`, shown);
+  }
+
+  console.log("\nhover popover");
+  await p.click("#tab-c3");
+  await new Promise(r => setTimeout(r, 3000));
+  const rows = await p.$$("#tCargo tbody tr");
+  if (rows.length < 3) {
+    console.log(`  skip  needs C3 rows to hover (found ${rows.length}) — run against a server with data:`);
+    console.log(`        DATA_SOURCE=sample WA_PREWARM=0 PORT=4322 node src/server.js`);
+    console.log(`        UI_TEST_URL=http://localhost:4322 npm run test:ui`);
+  } else {
+    const vis = () => p.evaluate(() => { const e = document.querySelector("#pop"); return !e.hidden && e.classList.contains("show"); });
+    const pbody = () => p.evaluate(() => document.querySelector("#pop pre").textContent.slice(0, 40));
+
+    await rows[0].hover();
+    await new Promise(r => setTimeout(r, 250));
+    ok("appears on hover", await vis());
+
+    // The flicker: hidePop's 140ms teardown was never cancelled, so moving to
+    // a new row hid the popover that row had just opened.
+    await rows[1].hover();
+    await new Promise(r => setTimeout(r, 400));
+    ok("survives moving between rows", await vis(), "popover vanished after switching rows");
+
+    // It must not blanket the list. An interactive popover over 34px rows
+    // swallows their mouseenter, leaving a stale message on screen.
+    const blocks = await p.evaluate(() =>
+      getComputedStyle(document.querySelector("#pop")).pointerEvents !== "none");
+    ok("never intercepts the pointer over the rows", !blocks);
+
+    const seen = new Set();
+    for (let i = 0; i < Math.min(5, rows.length); i++) {
+      await rows[i].hover();
+      await new Promise(r => setTimeout(r, 220));
+      seen.add(await pbody());
+    }
+    ok("each row opens its own message", seen.size >= 3, `only ${seen.size} distinct messages across 5 rows`);
+
+    // Positioned once, not dragged after the cursor.
+    const at = () => p.evaluate(() => { const e = document.querySelector("#pop"); return e.style.left + "," + e.style.top; });
+    const before = await at();
+    const bb = await rows[4].boundingBox();
+    await p.mouse.move(bb.x + bb.width - 20, bb.y + bb.height / 2);
+    await new Promise(r => setTimeout(r, 250));
+    ok("does not chase the cursor within a row", before === await at());
+
+    await p.mouse.move(5, 5);
+    await new Promise(r => setTimeout(r, 600));
+    ok("closes once the cursor leaves", !(await vis()));
+
+    for (let i = 0; i < 6 && i < rows.length; i++) { await rows[i].hover(); await new Promise(r => setTimeout(r, 60)); }
+    await new Promise(r => setTimeout(r, 400));
+    ok("survives a fast sweep across rows", await vis() && (await pbody()).length > 0);
   }
 
   console.log("\nno JS errors");
