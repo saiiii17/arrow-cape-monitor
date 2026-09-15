@@ -270,6 +270,9 @@ function start({ fresh = false } = {}) {
     // An operator pressing Connect has waited out any lockout and is entitled
     // to a clean slate, including the restart circuit breaker.
     supervisor.reset();
+    state.crashes = 0;      // deliberate teardowns are not crashes
+    state.reloadedOnce = false;
+    state.reloadTried = false;
     const fgen = bumpGeneration();
     if (client) {
       const c = client; client = null;
@@ -635,6 +638,11 @@ function start({ fresh = false } = {}) {
         const oom = wasOom ? ` (cgroup oom_kill=${m.oomKill} — out of memory)` : "";
         console.error(`  [wa] chromium exited code=${code} signal=${signal}${oom}`);
         if (state.abandoned || state.status === "idle") return; // deliberate teardown
+        // Superseded by a newer Connect/Unlink: this exit is one WE caused, so
+        // it must not count toward the crash budget. Without this, pressing
+        // Unlink and Connect a handful of times accumulated four "crashes" and
+        // wedged the app on "Chromium keeps exiting" until a server restart.
+        if (!isCurrent(gen)) return;
 
         // A crash mid-session leaves the app dead until someone presses Connect.
         // Come back automatically, but cap it so a hard OOM loop cannot spin.
@@ -937,6 +945,41 @@ function hardStop() {
     .catch(() => {});
 }
 
+// Background teardown runs on the same event loop that serves HTTP. The
+// synchronous forms below block it: the profile kill waits up to 2s and rm -rf
+// on a Chrome profile is not fast, which together pushed responses past nine
+// seconds during repeated Connect/Unlink presses. These twins do the same work
+// without stalling everything else. The sync forms stay for the callers that
+// genuinely must finish before a launch begins.
+async function clearStaleProfileLockAsync() {
+  const pattern = `--user-data-dir=${PROFILE_DIR}`;
+  const count = () => {
+    try {
+      return execFileSync("pgrep", ["-f", "--", pattern], { encoding: "utf8" }).trim().split("\n").filter(Boolean).length;
+    } catch {
+      return 0;
+    }
+  };
+  if (count() === 0) return [];
+  try { execFileSync("pkill", ["-9", "-f", "--", pattern], { stdio: "ignore" }); } catch { /* gone */ }
+  const deadline = Date.now() + 2000;
+  while (count() > 0 && Date.now() < deadline) await new Promise((r) => setTimeout(r, 100));
+  for (const f of ["SingletonLock", "SingletonCookie", "SingletonSocket"]) {
+    try { await fs.promises.rm(path.join(PROFILE_DIR, f), { force: true }); } catch { /* not present */ }
+  }
+  return ["orphaned chrome"];
+}
+
+async function wipeSessionAsync() {
+  await clearStaleProfileLockAsync();
+  try {
+    await fs.promises.rm(PROFILE_DIR, { recursive: true, force: true });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 // Wipe the stored session entirely. Needed when the saved credentials are
 // damaged -- the symptom is "couldn't link device" on an otherwise valid scan.
 function wipeSession() {
@@ -1008,9 +1051,9 @@ function logout({ unlink = true, wipe = false, clearData = false } = {}) {
       await withTimeout(() => c.destroy(), 6000);
     }
     if (!isCurrent(gen)) return; // a newer Connect owns the profile now
-    if (wipe) wipeSession();
+    if (wipe) await wipeSessionAsync();
     if (!isCurrent(gen)) return;
-    clearStaleProfileLock(); // belt-and-braces: release the profile lock
+    await clearStaleProfileLockAsync(); // belt-and-braces: release the lock
   })().catch(() => {});
 }
 
@@ -1736,4 +1779,4 @@ function environmentInfo() {
   };
 }
 
-module.exports = { start, snapshot, backfill, syncAll, prewarm, environmentInfo, probeModules, tryHydrate, diagnoseHistoryInternals, historySince, openChatByName, inspectAfterOpen, setWatching, logout, send, refreshGroups, importExport, clearStaleProfileLock, wipeSession };
+module.exports = { clearStaleProfileLockAsync, wipeSessionAsync, start, snapshot, backfill, syncAll, prewarm, environmentInfo, probeModules, tryHydrate, diagnoseHistoryInternals, historySince, openChatByName, inspectAfterOpen, setWatching, logout, send, refreshGroups, importExport, clearStaleProfileLock, wipeSession };

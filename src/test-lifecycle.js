@@ -20,6 +20,7 @@ const sleep = (ms) => new Promise(r => setTimeout(r, ms));
   const hardFailures = [];
   const observed = [];          // launch failures seen at any point in the run
   const seenSteps = new Set();
+  const perOp = {}; const slow = [];
 
   for (let i = 0; i < ROUNDS; i++) {
     const op = ops[Math.floor(Math.random() * ops.length)];
@@ -27,6 +28,8 @@ const sleep = (ms) => new Promise(r => setTimeout(r, ms));
     const r = await post(op);
     const ms = Date.now() - t0;
     worst = Math.max(worst, ms);
+    perOp[op] = Math.max(perOp[op] || 0, ms);
+    if (ms > 2000) slow.push(`${op} ${ms}ms (round ${i})`);
     if (r.error) { errors++; console.log(`    round ${i} ${op} -> ${r.error}`); }
     // The end state is not enough: with the generation guard off, the run
     // still produced "Failed to launch the browser process" while finishing
@@ -61,7 +64,8 @@ const sleep = (ms) => new Promise(r => setTimeout(r, ms));
   const procs = await get("/api/wa/debug").then(d => d.chromiumProcesses).catch(() => null);
   if (procs != null) ok("no pile-up of orphaned chromium processes", procs <= 2, `${procs} chromium processes alive`);
   ok("no endpoint returned an error", errors === 0, `${errors} errored responses`);
-  ok("every response stayed responsive (<3s)", worst < 3000, `slowest ${worst}ms`);
+  ok("every response stayed responsive (<3s)", worst < 3000,
+     `slowest ${worst}ms | per-op worst: ${JSON.stringify(perOp)} | ${slow.slice(0,4).join(", ")}`);
 
   // Land on a known state and let the async teardowns drain.
   await post("/api/wa/logout");

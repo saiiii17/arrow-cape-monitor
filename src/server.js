@@ -256,7 +256,7 @@ const server = http.createServer(async (req, res) => {
     // kernel. The caller does not need to wait for that -- logout() has
     // already reset the state the UI reads, and the cleanup is generation
     // guarded, so a Connect pressed in the meantime is not affected by it.
-    setImmediate(() => { try { live.clearStaleProfileLock(); } catch { /* best effort */ } });
+    live.clearStaleProfileLockAsync().catch(() => {});
     return json(res, 200, { ...live.snapshot(), cleared: ["clearing browser profile"] });
   }
 
