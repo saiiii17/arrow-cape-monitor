@@ -511,6 +511,17 @@ function start({ fresh = false } = {}) {
     state.authWatchdog = setInterval(async () => {
       if (state.status !== "authenticated" || !client) return clearInterval(state.authWatchdog);
       const waited = Math.round((Date.now() - state.authAt) / 1000);
+
+      // Before escalating, ask the page whether it is actually finished. A
+      // session can be fully loaded -- chat pane mounted, chats rendered --
+      // while the library never emits `ready`. Reloading or restarting a
+      // working session is strictly worse than using it.
+      const ps = await pageState();
+      if (ps.ok && ps.chatListPresent && !ps.needsScan) {
+        clearInterval(state.authWatchdog);
+        await becomeReady("probe");
+        return;
+      }
       if (waited >= 150) {
         clearInterval(state.authWatchdog);
         if (!state.reloadedOnce) {
@@ -537,7 +548,18 @@ function start({ fresh = false } = {}) {
     }, 5000);
   });
 
-  client.on("ready", async () => {
+  client.on("ready", () => becomeReady("library"));
+
+  // whatsapp-web.js does not always emit `ready`, even when the page is
+  // demonstrably finished: probing a hung session showed the chat list mounted,
+  // 103 unread and every chat rendered, while the app still sat at
+  // "authenticated". Waiting on an event that never arrives is what produced
+  // "Still loading after 75s" on a working session. So readiness is also
+  // PROBED -- if WhatsApp's own chat pane is on screen, it is ready, whatever
+  // the library did or did not emit.
+  async function becomeReady(via) {
+    if (state.status === "ready") return;      // whichever path got here first
+    if (!isCurrent(gen)) return;
     supervisor.event("ready"); // ends protection and every deadline
     clearTimeout(state.startTimer);
     clearInterval(state.authWatchdog);
@@ -551,7 +573,8 @@ function start({ fresh = false } = {}) {
     state.reloadTried = false;
     state.reloadedOnce = false;
     state.me = client.info?.pushname || client.info?.wid?.user || null;
-    step(`Linked as ${state.me || "unknown"} — reading groups…`);
+    step(`Linked as ${state.me || "unknown"} — reading groups…`
+      + (via === "probe" ? " (detected from the page — the library never signalled ready)" : ""));
 
     // Ready: stop the fast poll. Watch slowly in case another window steals it.
     startClaimLoop(60_000);
@@ -568,7 +591,7 @@ function start({ fresh = false } = {}) {
         step("Note: no persistent volume — group names and the login reset on each redeploy", "warn");
       }
     }
-  });
+  }
 
   client.on("auth_failure", (m) => {
     state.status = "error";
@@ -1627,6 +1650,40 @@ async function tryHydrate(chatId) {
 }
 
 // Inventory of WhatsApp's internal modules, to find the hydration/open API.
+// What is actually on the WhatsApp Web page right now. The "authenticated but
+// never ready" hang is invisible from the outside -- the status says loading
+// and nothing else is reported -- and the debug endpoint that should have
+// answered it crashed whenever no groups were loaded, which is precisely when
+// the hang happens. This answers it without needing a chat.
+async function pageState() {
+  if (!client || !client.pupPage) return { ok: false, why: "no browser" };
+  if (!(await pageUsable())) return { ok: false, why: "page is dead or detached" };
+  try {
+    return await client.pupPage.evaluate(() => {
+      const txt = (document.body.innerText || "").replace(/\s+/g, " ").trim();
+      const has = (re) => re.test(txt);
+      const btn = [...document.querySelectorAll("button,div[role=button]")]
+        .map((b) => (b.innerText || "").trim()).filter(Boolean).slice(0, 12);
+      return {
+        ok: true,
+        url: location.href,
+        title: document.title,
+        divs: document.querySelectorAll("div").length,
+        // The single most common cause of the hang: another client holds the
+        // session and WhatsApp is waiting for someone to choose.
+        conflictDialog: has(/open in another window|Use here|use it here|another device/i),
+        stillLoading: has(/Loading|Connecting|End-to-end encrypted|syncing/i),
+        needsScan: Boolean(document.querySelector("div[data-ref]")),
+        chatListPresent: Boolean(document.querySelector("#pane-side")),
+        buttons: btn,
+        text: txt.slice(0, 220),
+      };
+    });
+  } catch (e) {
+    return { ok: false, why: String((e && e.message) || e).slice(0, 120) };
+  }
+}
+
 async function probeModules() {
   return client.pupPage.evaluate(() => {
     const out = {};
@@ -1799,4 +1856,4 @@ function environmentInfo() {
   };
 }
 
-module.exports = { clearStaleProfileLockAsync, wipeSessionAsync, start, snapshot, backfill, syncAll, prewarm, environmentInfo, probeModules, tryHydrate, diagnoseHistoryInternals, historySince, openChatByName, inspectAfterOpen, setWatching, logout, send, refreshGroups, importExport, clearStaleProfileLock, wipeSession };
+module.exports = { pageState, clearStaleProfileLockAsync, wipeSessionAsync, start, snapshot, backfill, syncAll, prewarm, environmentInfo, probeModules, tryHydrate, diagnoseHistoryInternals, historySince, openChatByName, inspectAfterOpen, setWatching, logout, send, refreshGroups, importExport, clearStaleProfileLock, wipeSession };

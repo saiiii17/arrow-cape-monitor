@@ -199,6 +199,17 @@ const server = http.createServer(async (req, res) => {
       const g = url.searchParams.get("group");
       const groups = live.snapshot().groups;
       const hit = groups.find((x) => x.name === g) || groups[0];
+      // Without a group there is nothing to inspect -- but that is exactly the
+      // state worth reporting, so describe the page rather than throwing on
+      // `hit.name` the way this used to.
+      if (!hit) {
+        const snap = live.snapshot();
+        return json(res, 200, {
+          note: "no groups loaded yet — reporting the live page instead",
+          status: snap.status, connected: snap.connected, error: snap.error || null,
+          page: await live.pageState(),
+        });
+      }
       // Opening the chat makes WhatsApp load and DECRYPT its messages into
       // Collections.Msg; without it only encrypted raw rows are available.
       if (url.searchParams.get("probe") === "1") return json(res, 200, await live.probeModules());
