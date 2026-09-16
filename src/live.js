@@ -830,7 +830,16 @@ async function backfill(groupName, { since, limit = 50000 } = {}) {
   // Date floor in Dubai time, matching every other timestamp in the app.
   const sinceUnix = since ? Math.floor(new Date(`${since}T00:00:00+04:00`).getTime() / 1000) : 0;
 
+  // WhatsApp only loads and decrypts a chat's messages once that conversation
+  // is actually opened. Paginating without opening it first sees whatever
+  // happens to be in memory -- usually a single message -- and loadEarlierMsgs
+  // then reports there is nothing older, which the UI relayed as "complete,
+  // nothing earlier in this group". Measured on the same group in the same
+  // session: 1 message without opening, 14 with. The chat must be opened.
+  const opened = await openChatByName(known.name);
+
   const { rows, diag } = await historySince(known.id, sinceUnix, limit);
+  diag.opened = opened && opened.ok ? (opened.via || true) : `failed: ${(opened && opened.error) || "unknown"}`;
   const records = rows.map((r) => toRecord(r.timestamp, r.sender, r.text));
   const added = append(groupName, records);
 
@@ -840,6 +849,7 @@ async function backfill(groupName, { since, limit = 50000 } = {}) {
     since: since || "all",
     found: rows.length,
     added,
+    opened: diag.opened,
     pages: diag.pages,
     loaded: `${diag.startCount} → ${diag.endCount}`,
     stopped: diag.stopped,
@@ -880,7 +890,9 @@ async function syncAll() {
         // 6th" reads as a bug when the group simply has nothing earlier, and
         // reads as fine when history was actually truncated. Say which.
         const why =
-          r.stopped === "no older messages"
+          r.opened && String(r.opened).startsWith("failed")
+            ? ` · could not open the chat — history may be incomplete`
+          : r.stopped === "no older messages"
             ? ` · complete — nothing earlier in this group`
             : r.stopped === "reached since-date"
               ? ` · complete back to ${r.since}`
