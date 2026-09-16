@@ -93,6 +93,53 @@ const val = (p, s) => p.$eval(s, (e) => e.value);
     ok(`${label} tab shows content`, shown);
   }
 
+  console.log("\nediting a date must not corrupt the range");
+  await p.click("#tab-c5");
+  await new Promise(r => setTimeout(r, 700));
+  {
+    // A date input reports every intermediate state while being edited:
+    // typing "01/09/2026" walks through 0009, 0090, 0901, 9012. The old
+    // "From must not be after To" guard fired on each, so a half-typed year
+    // dragged the other end along and collapsed 01→14 into one nonsense day,
+    // firing a request per keystroke on the way.
+    await p.evaluate(() => {
+      window.__q = [];
+      const of = window.fetch;
+      window.fetch = function (u, ...a) {
+        const m = String(u).match(/digest\?from=([\d-]+)&to=([\d-]+)/);
+        if (m) window.__q.push(`${m[1]}..${m[2]}`);
+        return of.apply(this, [u, ...a]);
+      };
+    });
+    await p.click("#d5today");
+    await new Promise(r => setTimeout(r, 900));
+    await p.evaluate(() => { window.__q = []; });
+
+    await p.click("#d5from");
+    await p.keyboard.type("09/01/2026");
+    await new Promise(r => setTimeout(r, 1500));
+
+    const q = await p.evaluate(() => window.__q);
+    const junk = q.filter(x => !/^20\d\d-/.test(x.split("..")[0]) || !/^20\d\d-/.test(x.split("..")[1]));
+    ok("no request is made for a half-typed date", junk.length === 0, `junk ranges: ${junk.slice(0, 4).join(", ")}`);
+    ok("typing does not fire a request per keystroke", q.length <= 2, `${q.length} requests while typing`);
+
+    const to = await val(p, "#d5to");
+    ok("editing From does not corrupt To", /^20\d\d-\d\d-\d\d$/.test(to), `To became ${to}`);
+  }
+
+  // The header must state the range that was ASKED for, not just the days that
+  // happened to have traffic -- showing only the latter read as the filter
+  // being ignored ("1 to 14" displaying as "14 - 14").
+  await p.$eval("#d5to",   e => { e.value = "2026-09-14"; e.dispatchEvent(new Event("change")); });
+  await new Promise(r => setTimeout(r, 800));
+  await p.$eval("#d5from", e => { e.value = "2026-09-01"; e.dispatchEvent(new Event("change")); });
+  await new Promise(r => setTimeout(r, 1800));
+  const hdr = await p.$eval("#meta5", e => e.textContent);
+  const pf = await val(p, "#d5from"), pt = await val(p, "#d5to");
+  ok("the range survives being set end to end", pf === "2026-09-01" && pt === "2026-09-14", `${pf}..${pt}`);
+  ok("the header states the requested range", hdr.includes(pf) && hdr.includes(pt), `header: ${hdr.slice(0, 80)}`);
+
   console.log("\nrapid interaction (stale responses)");
   // The C5 controls are hidden on other tabs, so make sure we are on C5.
   await p.click("#tab-c5");

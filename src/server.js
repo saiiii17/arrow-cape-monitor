@@ -59,6 +59,10 @@ const server = http.createServer(async (req, res) => {
       const r = await buildDigestRange(from, to, { raw: url.searchParams.get("raw") === "1" });
       return json(res, 200, {
         date: `${r.from} → ${r.to}`,
+        // The range asked for, kept separate from the days that had traffic.
+        // Collapsing the two made the header contradict the filter above it.
+        requestedFrom: r.requestedFrom,
+        requestedTo: r.requestedTo,
         from: r.from,
         to: r.to,
         dayCount: r.dayCount,

@@ -101,6 +101,11 @@ async function buildDigestRange(from, to, opts = {}) {
   }
 
   return {
+    // What was ASKED for. Reporting only the days that happened to have
+    // traffic made the header disagree with the filter above it -- a range of
+    // 01→14 came back as "06 → 14" and read as the filter being ignored.
+    requestedFrom: from,
+    requestedTo: to,
     from: days[0] || from,
     to: days[days.length - 1] || to,
     days: built.map((b) => ({ date: b.date, messagesScanned: b.messagesScanned, groups: b.groups })),

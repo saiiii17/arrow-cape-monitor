@@ -563,7 +563,8 @@ $("#waBackfill").onclick=async(e)=>{
 /* ---------------- C5 ---------------- */
 function renderC5(d){
   if(!d || d.error || !d.rows || !d.rows.length){
-    const span = d && d.from ? `${d.from} → ${d.to}` : "that range";
+    const rf=(d&&(d.requestedFrom||d.from)), rt=(d&&(d.requestedTo||d.to));
+    const span = rf ? (rf===rt ? rf : `${rf} → ${rt}`) : "that range";
     $("#meta5").textContent = d && d.error ? d.error : `no messages in ${span}`;
     $("#board5").innerHTML = "";
     $("#board5").appendChild(el("div","empty", d && d.error ? d.error : "Nothing to show — try another date."));
@@ -571,8 +572,14 @@ function renderC5(d){
   }
   c5=d;
   const multiDay = Boolean(d.from && d.to && d.from!==d.to);
+  // d.date is the span of days that actually had traffic, which is not the
+  // range the user asked for -- showing only that read as the filter being
+  // ignored. Lead with the request, then what was found inside it.
+  const rf=d.requestedFrom||d.from, rt=d.requestedTo||d.to;
+  const asked = rf && rt ? (rf===rt ? rf : `${rf} → ${rt}`) : d.date;
+  const found = d.date && d.date!==asked ? ` · messages on ${d.date}` : "";
   $("#meta5").textContent =
-    `${d.date} · ${d.messagesScanned} messages${d.dayCount>1?" over "+d.dayCount+" days":""}${/^00:00–24:00/.test(d.window||"")?"":" · "+d.window} · ${d.source || ""}`
+    `${asked}${found} · ${d.messagesScanned} messages${d.dayCount>1?" over "+d.dayCount+" days":""}${/^00:00–24:00/.test(d.window||"")?"":" · "+d.window} · ${d.source || ""}`
     + (d.capped?`  (capped at ${d.capped} days)`:"");
   const board=$("#board5"); board.innerHTML="";
   for (const a of ACCTS){
@@ -927,10 +934,16 @@ function markReady(){
   $("#d3").title = warm ? "Already extracted — loads instantly"
                         : "Not extracted yet — first run takes a few minutes";
 }
-$("#d3").onchange=async()=>{ await initC3Controls($("#d3").value); };
+let d3Timer=null;
+$("#d3").onchange=$("#d3").oninput=()=>{
+  const sel=$("#d3");
+  if(!validDay(sel.value,sel)) return;   // mid-edit: 0009-.., 0090-.., 0901-..
+  clearTimeout(d3Timer);
+  d3Timer=setTimeout(()=>initC3Controls(sel.value),300);
+};
 $("#winReset").onclick=()=>{ applySuggestedWindow(); prefs.set("winFrom",$("#winFrom").value); prefs.set("winTo",$("#winTo").value); };
-$("#winFrom").onchange=()=>prefs.set("winFrom",$("#winFrom").value);
-$("#winTo").onchange=()=>prefs.set("winTo",$("#winTo").value);
+$("#winFrom").onchange=()=>{ if(validDay($("#winFrom").value,$("#winFrom"))) prefs.set("winFrom",$("#winFrom").value); };
+$("#winTo").onchange=()=>{ if(validDay($("#winTo").value,$("#winTo"))) prefs.set("winTo",$("#winTo").value); };
 $("#go").onclick=loadC3;
 // Dubai "today": the To picker always defaults to it and cannot exceed it.
 function todayDubai(){
@@ -975,9 +988,38 @@ async function initDates(){
   markQuick();
 }
 
-// Keep the range sane: From must not be after To.
-$("#d5from").onchange=()=>{ if($("#d5from").value>$("#d5to").value) $("#d5to").value=$("#d5from").value; saveD5(); markQuick(); loadC5(); };
-$("#d5to").onchange=()=>{ if($("#d5to").value<$("#d5from").value) $("#d5from").value=$("#d5to").value; saveD5(); markQuick(); loadC5(); };
+// A date input reports every intermediate state while it is being edited.
+// Typing "01/09/2026" walks through 0009, 0090, 0901, 9012 ... and the naive
+// "From must not be after To" guard fired on each of those, so a half-typed
+// year dragged the other end of the range with it and collapsed 01→14 into a
+// single nonsense day. Each keystroke also fired its own request.
+//
+// So: ignore values that are not yet a real, in-range date, apply the ordering
+// guard only to settled ones, and debounce the reload.
+function validDay(v,sel){
+  if(!v||!/^\d{4}-\d{2}-\d{2}$/.test(v)) return false;
+  if(sel.min&&v<sel.min) return false;
+  if(sel.max&&v>sel.max) return false;
+  return true;
+}
+let d5Timer=null;
+function d5Changed(which){
+  const from=$("#d5from"), to=$("#d5to");
+  // Mid-edit: leave both fields and the view completely alone.
+  if(!validDay(which==="from"?from.value:to.value, which==="from"?from:to)) return;
+  if(validDay(from.value,from) && validDay(to.value,to)){
+    if(from.value>to.value){
+      if(which==="from") to.value=from.value; else from.value=to.value;
+    }
+    saveD5(); markQuick();
+    clearTimeout(d5Timer);
+    d5Timer=setTimeout(loadC5,300);
+  }
+}
+for(const [sel,which] of [[$("#d5from"),"from"],[$("#d5to"),"to"]]){
+  sel.addEventListener("change",()=>d5Changed(which));
+  sel.addEventListener("input",()=>d5Changed(which));
+}
 
 // One-click days, counted back from Dubai today rather than the browser's.
 function dayBack(n){ const d=new Date(`${todayDubai()}T12:00:00Z`); d.setUTCDate(d.getUTCDate()-n); return d.toISOString().slice(0,10); }
