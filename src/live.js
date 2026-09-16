@@ -1076,6 +1076,9 @@ function logout({ unlink = true, wipe = false, clearData = false } = {}) {
   // belong to the account being disconnected.
   if (clearData) {
     state.cleared = clearAll();
+    if (state.cleared.archived) {
+      step(`Archived ${state.cleared.archived} captured message(s) — WhatsApp will not re-send them, so they are kept`, "info");
+    }
     state.watching = { c5: "", c3: "", since: "" };
     process.env.C5_GROUP = "";
     process.env.C3_GROUP = "";

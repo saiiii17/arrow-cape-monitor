@@ -565,9 +565,19 @@ function renderC5(d){
   if(!d || d.error || !d.rows || !d.rows.length){
     const rf=(d&&(d.requestedFrom||d.from)), rt=(d&&(d.requestedTo||d.to));
     const span = rf ? (rf===rt ? rf : `${rf} → ${rt}`) : "that range";
-    $("#meta5").textContent = d && d.error ? d.error : `no messages in ${span}`;
+    // "no messages" was wrong and confusing whenever the group HAD traffic in
+    // the range but none of it concerned RIO, FMG or BHP -- it read as the
+    // date filter having failed. Say which of the two actually happened.
+    const scanned = (d && d.messagesScanned) || 0;
+    const headline = d && d.error ? d.error
+      : scanned ? `${span} · ${scanned} message${scanned===1?"":"s"} · none about RIO, FMG or BHP`
+                : `no messages at all in ${span}`;
+    const detail = d && d.error ? d.error
+      : scanned ? `${scanned} message${scanned===1?"":"s"} in this range, but none of them mention RIO, FMG or BHP.`
+                : "This group captured nothing in this range. WhatsApp only sends recent history to a newly linked device — load a chat export below to go further back.";
+    $("#meta5").textContent = headline;
     $("#board5").innerHTML = "";
-    $("#board5").appendChild(el("div","empty", d && d.error ? d.error : "Nothing to show — try another date."));
+    $("#board5").appendChild(el("div","empty", detail));
     return;
   }
   c5=d;

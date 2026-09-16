@@ -275,6 +275,13 @@ const server = http.createServer(async (req, res) => {
     return json(res, 200, { ...live.snapshot(), cleared: ["clearing browser profile"] });
   }
 
+  if (url.pathname === "/api/wa/restore" && req.method === "POST") {
+    // Unlink archives the capture rather than deleting it; this puts the most
+    // recent archive back, merged with anything captured since.
+    const r = require("./livestore").restoreLatest();
+    return json(res, 200, { ...r, ...live.snapshot() });
+  }
+
   if (url.pathname === "/api/wa/logout" && req.method === "POST") {
     // Unlink wipes the stored credentials so the next connect is a clean link.
     // Unlink = disconnect, forget credentials, and delete captured messages.
