@@ -303,7 +303,17 @@ const server = http.createServer(async (req, res) => {
     return;
   }
   const types = { ".html": "text/html", ".css": "text/css", ".js": "text/javascript" };
-  res.writeHead(200, { "Content-Type": types[path.extname(full)] || "text/plain" });
+  // No cache headers at all meant browsers applied heuristic caching to the
+  // dashboard: after a code change the page kept serving the old markup and
+  // script, so fixes looked like they had not landed and old bugs looked like
+  // they had come back. The whole UI is one small file served locally -- there
+  // is nothing to gain by caching it and a great deal to lose.
+  res.writeHead(200, {
+    "Content-Type": types[path.extname(full)] || "text/plain",
+    "Cache-Control": "no-store, must-revalidate",
+    Pragma: "no-cache",
+    Expires: "0",
+  });
   fs.createReadStream(full).pipe(res);
 });
 

@@ -93,6 +93,33 @@ const val = (p, s) => p.$eval(s, (e) => e.value);
     ok(`${label} tab shows content`, shown);
   }
 
+  console.log("\nthe dashboard must never be served from cache");
+  // With no cache headers the browser applied heuristic caching, so after a
+  // code change the page kept serving the old script: fixes looked like they
+  // had not landed and old bugs looked like they had returned.
+  {
+    const r = await p.goto(URL, { waitUntil: "domcontentloaded" });
+    const cc = (r.headers()["cache-control"] || "").toLowerCase();
+    ok("the page is sent with no-store", cc.includes("no-store"), `Cache-Control: "${cc || "(absent)"}"`);
+    await new Promise(rr => setTimeout(rr, 1500));
+  }
+
+  console.log("\nthe header must never contradict the filter");
+  // Including when the range is empty -- an empty result used to report the
+  // data span (or the last range that had one) instead of what was asked for.
+  await p.click("#tab-c5");
+  await new Promise(r => setTimeout(r, 700));
+  await p.$eval("#d5to",   e => { e.value = "2026-09-14"; e.dispatchEvent(new Event("change")); });
+  await new Promise(r => setTimeout(r, 800));
+  await p.$eval("#d5from", e => { e.value = "2026-09-01"; e.dispatchEvent(new Event("change")); });
+  await new Promise(r => setTimeout(r, 1800));
+  {
+    const f = await val(p, "#d5from"), t = await val(p, "#d5to");
+    const m = await p.$eval("#meta5", e => e.textContent);
+    ok("an empty range still names the range asked for", m.includes(f) && m.includes(t),
+       `filter ${f}→${t}, header "${m.slice(0, 70)}"`);
+  }
+
   console.log("\nediting a date must not corrupt the range");
   await p.click("#tab-c5");
   await new Promise(r => setTimeout(r, 700));
