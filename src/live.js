@@ -111,6 +111,11 @@ function containerMemory() {
 }
 const WATCH_FILE = path.join(__dirname, "..", "data", "watched-groups.json");
 
+// Ceiling on a single group's history pull. Whatever it has managed to capture
+// by then is already written to the store, so a timeout costs progress, never
+// data -- and it guarantees state.syncing clears.
+const PULL_TIMEOUT_MS = Number(process.env.PULL_TIMEOUT_MS || 120_000);
+
 // Whether an account is linked is OUR fact, not something to infer from disk.
 // It used to be read as "the chromium profile directory exists", but simply
 // showing a QR creates that directory -- and its whatsapp IndexedDB -- so the
@@ -838,8 +843,17 @@ async function backfill(groupName, { since, limit = 50000 } = {}) {
   // session: 1 message without opening, 14 with. The chat must be opened.
   const opened = await openChatByName(known.name);
 
+  // Opening returns as soon as the conversation is SELECTED, not when its
+  // messages have loaded -- it reports messagesRendered:false and the message
+  // collection is still whatever was cached. Paginating at that instant sees
+  // one message and concludes the group has no history, which is exactly what
+  // happened on the pull straight after a fresh link. Wait for the collection
+  // to actually fill before asking for more.
+  const loaded = await waitForChatMessages(known.id);
+
   const { rows, diag } = await historySince(known.id, sinceUnix, limit);
   diag.opened = opened && opened.ok ? (opened.via || true) : `failed: ${(opened && opened.error) || "unknown"}`;
+  diag.loadedBeforePull = loaded;
   const records = rows.map((r) => toRecord(r.timestamp, r.sender, r.text));
   const added = append(groupName, records);
 
@@ -884,7 +898,16 @@ async function syncAll() {
     for (const [tag, g] of targets) {
       step(`Pulling history for ${tag} · ${g}${state.watching.since ? " since " + state.watching.since : ""}…`);
       try {
-        const r = await backfill(g, { since: state.watching.since || undefined });
+        // One slow or enormous group must not wedge the app. state.syncing
+        // blocks Connect and Force reset while it is set, so a pull that never
+        // returns leaves the user with no way out but killing the server --
+        // observed at over two minutes on a single group with no output.
+        const r = await Promise.race([
+          backfill(g, { since: state.watching.since || undefined }),
+          new Promise((_, rej) =>
+            setTimeout(() => rej(new Error(`timed out after ${Math.round(PULL_TIMEOUT_MS / 1000)}s — the group may be very large; press Pull history to continue`)),
+              PULL_TIMEOUT_MS)),
+        ]);
         results.push({ tag, group: g, ok: true, ...r });
         // Why the pull ended matters as much as what it found: "starts on the
         // 6th" reads as a bug when the group simply has nothing earlier, and
@@ -1823,6 +1846,38 @@ function importExport(groupName, text, { since } = {}) {
   const records = rows.map((m) => ({ ...m, live: true }));
   const added = append(groupName, records);
   return { group: groupName, parsed: parsed.length, kept: rows.length, added, store: stats(groupName) };
+}
+
+// Opening a chat is asynchronous inside WhatsApp: the conversation is selected
+// immediately but its messages arrive afterwards. Poll the message collection
+// until it stops growing, so a pull never runs against a half-loaded chat.
+async function waitForChatMessages(chatId, { settleMs = 700, maxMs = 15000 } = {}) {
+  const count = async () => {
+    try {
+      return await client.pupPage.evaluate((id) => {
+        const C = window.require("WAWebCollections");
+        const WF = window.require("WAWebWidFactory");
+        const chat = C.Chat.get(WF.createWid(id));
+        if (!chat || typeof chat.msgs?.getModelsArray !== "function") return -1;
+        return chat.msgs.getModelsArray().length;
+      }, chatId);
+    } catch {
+      return -1;
+    }
+  };
+  const deadline = Date.now() + maxMs;
+  let last = await count();
+  let stableSince = Date.now();
+  while (Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 250));
+    const now = await count();
+    if (now > last) { last = now; stableSince = Date.now(); continue; }
+    // Settled, and there is something to work with.
+    if (last > 1 && Date.now() - stableSince >= settleMs) break;
+    // Nothing ever arrived: give it the full budget before giving up.
+    if (last <= 1) stableSince = Date.now();
+  }
+  return last;
 }
 
 // Exposed so history can open the chat first -- WhatsApp only decrypts a
