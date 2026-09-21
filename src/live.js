@@ -590,6 +590,7 @@ function start({ fresh = false } = {}) {
     step(`${state.groups.length} groups found`);
     if (state.watching.c5 || state.watching.c3) {
       await syncAll();
+      scheduleCatchUpPull();
     } else {
       step("Linked. Now enter the C5 and C3 group names below and press Save groups & pull history", "info");
       if (!process.env.WWEBJS_PATH) {
@@ -1012,6 +1013,7 @@ function snapshot() {
 function hardStop() {
   const c = client;
   client = null;
+  clearTimeout(state.catchUpTimer);
   bumpGeneration(); // anything the old client still emits is now ignored
   clearTimeout(state.startTimer);
   clearTimeout(state.qrStaleTimer);
@@ -1846,6 +1848,23 @@ function importExport(groupName, text, { since } = {}) {
   const records = rows.map((m) => ({ ...m, live: true }));
   const added = append(groupName, records);
   return { group: groupName, parsed: parsed.length, kept: rows.length, added, store: stats(groupName) };
+}
+
+// Right after a device is linked, WhatsApp keeps copying history from the phone
+// to it for several minutes, so the first pull only sees what has arrived so
+// far. Measured: the C3 group returned 13 messages 20s after linking and 2,213
+// a few minutes later; the group list grew from 128 to 330 over the same span.
+// Pull once more after the copy has had time to land. Pulls only append new
+// messages, so a second one never duplicates anything.
+const CATCH_UP_MS = Number(process.env.CATCH_UP_PULL_MS || 180_000);
+function scheduleCatchUpPull() {
+  const gen = generation;
+  clearTimeout(state.catchUpTimer);
+  state.catchUpTimer = setTimeout(async () => {
+    if (!isCurrent(gen) || state.status !== "ready" || state.syncing) return;
+    step("Pulling again — WhatsApp copies older history to a new device for a few minutes after linking");
+    await syncAll();
+  }, CATCH_UP_MS);
 }
 
 // Opening a chat is asynchronous inside WhatsApp: the conversation is selected

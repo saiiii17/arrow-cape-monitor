@@ -146,7 +146,12 @@ function restoreLatest() {
         } catch { /* skip a damaged line */ }
       }
       fs.writeFileSync(target, merged.join("\n") + "\n");
-      restored += merged.length - existing.length;
+      // Against the UNIQUE existing lines: the merge also drops duplicates that
+      // were already in the file, which made a raw length difference negative.
+      const uniqueExisting = new Set(existing.map((line) => {
+        try { const m = JSON.parse(line); return `${m.date} ${m.time} ${String(m.body).slice(0, 60)}`; } catch { return line; }
+      })).size;
+      restored += Math.max(0, merged.length - uniqueExisting);
       groups.push(base);
     } catch { /* ignore */ }
   }

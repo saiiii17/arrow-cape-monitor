@@ -279,7 +279,10 @@ const server = http.createServer(async (req, res) => {
     // Unlink archives the capture rather than deleting it; this puts the most
     // recent archive back, merged with anything captured since.
     const r = require("./livestore").restoreLatest();
-    return json(res, 200, { ...r, ...live.snapshot() });
+    // Not spread over live.snapshot(): its own `groups` field (every group on
+    // the account) silently replaced the list of groups that were restored.
+    const snap = live.snapshot();
+    return json(res, 200, { restored: r.restored, restoredGroups: r.groups, status: snap.status, stores: snap.stores });
   }
 
   if (url.pathname === "/api/wa/logout" && req.method === "POST") {
