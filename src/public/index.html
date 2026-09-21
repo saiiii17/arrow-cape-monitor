@@ -432,19 +432,28 @@ function waRender(st){
   const s5=st.stores.c5, s3=st.stores.c3;
   if(st.status!=="ready" && (s5||s3)){
     $("#waLog").textContent =
-      (s5?`C5 store: ${s5.count} msgs saved (${s5.first||"-"} .. ${s5.last||"-"})\n`:"")+
-      (s3?`C3 store: ${s3.count} msgs saved (${s3.first||"-"} .. ${s3.last||"-"})\n`:"")+
+      (s5?`C5 ${storeLine(s5)}\n`:"")+
+      (s3?`C3 ${storeLine(s3)}\n`:"")+
       "not connected — saved messages are kept\n";
   } else if(s5||s3){
     $("#waLog").textContent =
-      (s5?`C5 store: ${s5.count} msgs, ${s5.days} days (${s5.first||"-"} .. ${s5.last||"-"})\n`:"")+
-      (s3?`C3 store: ${s3.count} msgs, ${s3.days} days (${s3.first||"-"} .. ${s3.last||"-"})\n`:"");
+      (s5?`C5 ${storeLine(s5)}\n`:"")+
+      (s3?`C3 ${storeLine(s3)}\n`:"");
   }
 }
 
 // One global poll. Renders the WhatsApp tab when it is showing, and on ANY tab
 // detects a change in the live store (history pulled, new message captured,
 // unlink) and refreshes what is on screen -- the stale-data complaint.
+// "C5 store: 1 msgs (2026-09-16 .. 2026-09-16)" was read as the date range
+// having been ignored, when it described the only message saved. Say it in
+// words: what is saved and on which days.
+function storeLine(st){
+  if(!st||!st.count) return "saved: nothing yet";
+  const n=`${st.count} message${st.count===1?"":"s"}`;
+  if(st.first===st.last) return `saved: ${n}, all on ${st.first}`;
+  return `saved: ${n} over ${st.days} day${st.days===1?"":"s"}, earliest ${st.first}, latest ${st.last}`;
+}
 let lastSig=null;
 function storeSig(st){ return JSON.stringify([st.connected, st.stores, st.watching, st.status==="idle"]); }
 async function sourceChanged(){

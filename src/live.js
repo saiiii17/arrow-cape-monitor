@@ -921,7 +921,14 @@ async function syncAll() {
             : r.stopped === "reached since-date"
               ? ` · complete back to ${r.since}`
               : ` · stopped early (${r.stopped}) — older history may still be on the phone`;
-        step(`${tag} · ${g}: ${r.found} messages${r.added ? ` (${r.added} new)` : ""} — ${r.store.first || "-"} → ${r.store.last || "-"}${why}`);
+        // Lead with the range asked for; the dates after it are where messages
+        // were actually found. "1 messages — 16 → 16" read as the filter being
+        // ignored when it meant "the only message since the 1st is on the 16th".
+        const asked = r.since && r.since !== "all" ? `since ${r.since}` : "all history";
+        const where = !r.found ? "none found"
+          : r.store.first === r.store.last ? `all on ${r.store.first}`
+          : `found ${r.store.first} → ${r.store.last}`;
+        step(`${tag} · ${g}: ${r.found} message${r.found === 1 ? "" : "s"} ${asked}${r.added ? ` (${r.added} new)` : ""} — ${where}${why}`);
       } catch (e) {
         const dead = DEAD_PAGE.test(e.message || "");
         results.push({ tag, group: g, ok: false, error: e.message, dead });
