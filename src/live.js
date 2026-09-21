@@ -612,8 +612,15 @@ function start({ fresh = false } = {}) {
 
   client.on("disconnected", (r) => {
     state.status = "idle";
+    state.connected = false;
     state.error = `disconnected: ${r}`;
     process.env.WA_CONNECTED = "";
+    // Say what actually happened. After a LOGOUT the next thing the user saw
+    // was "Could not read: Work. Check the exact group name" from a pull that
+    // was already running -- which sent them looking at group names.
+    step(String(r).toUpperCase().includes("LOGOUT")
+      ? "WhatsApp logged this device out — it was removed under Linked devices on the phone, or the session ended. Press Connect and scan again."
+      : `WhatsApp disconnected (${r}). Press Connect to reconnect.`, "error");
     hardStop();
   });
 
@@ -1044,8 +1051,15 @@ async function syncAll() {
       process.env.WA_CONNECTED = "";
       relaunch("page died during history pull", { force: true });
     } else {
-      const bad = results.filter((r) => !r.ok).map((r) => r.group).join(", ");
-      step(`Could not read: ${bad}. Check the exact group name, then press Pull history`, "error");
+      const failed = results.filter((r) => !r.ok);
+      const bad = failed.map((r) => r.group).join(", ");
+      // Only a missing group is a naming problem. Anything else -- most often
+      // the session dropping mid-pull -- must not send the user to re-type
+      // group names that were correct all along.
+      const naming = failed.every((r) => /No group named/i.test(r.error || ""));
+      if (naming) step(`Could not find: ${bad}. Check the exact group name, then press Pull history`, "error");
+      else if (state.status !== "ready") step(`Could not read ${bad}: WhatsApp disconnected during the pull. Press Connect, then Pull history.`, "error");
+      else step(`Could not read ${bad}: ${failed[0].error}. Press Pull history to try again.`, "error");
     }
   }
   return results;

@@ -623,13 +623,25 @@ function renderC5(d){
       if(r.edited){ const g=el("span","tag","edited");
         g.title = r.originalBody ? `Edited in WhatsApp. Originally:\n${r.originalBody}` : "Edited in WhatsApp"; top.appendChild(g); }
       const useSummary = r.summary && r.summaryVerified;
-      const pre = el("pre","body", useSummary ? r.summary : r.update);
-      if (useSummary) {
-        pre.title = "Click to show the original message";
+      const shown = useSummary ? r.summary : r.update;
+      const pre = el("pre","body", shown);
+      // Clicking shows the full message; for an edited one, the text from
+      // before the edit as well. It used to only toggle summary/original, so
+      // clicking an edited message never revealed what it said first.
+      const beforeEdit = r.edited && r.originalBody && r.originalBody !== r.update;
+      if (useSummary || beforeEdit) {
+        pre.title = beforeEdit ? "Click to see what it said before it was edited" : "Click to show the original message";
         pre.style.cursor = "pointer";
-        let raw = false;
-        pre.onclick = () => { raw = !raw; pre.textContent = raw ? r.update : r.summary; pre.style.opacity = raw ? ".7" : "1"; };
-      } else if (r.summary) {
+        let open = false;
+        pre.onclick = () => {
+          open = !open;
+          pre.textContent = !open ? shown
+            : beforeEdit ? `Now:\n${r.update}\n\nBefore the edit:\n${r.originalBody}`
+            : r.update;
+          pre.style.opacity = open ? ".8" : "1";
+        };
+      }
+      if (!useSummary && r.summary) {
         const t = el("span","tag","verbatim");
         t.title = "Summary failed number/verb verification — showing the original";
         top.appendChild(t);
