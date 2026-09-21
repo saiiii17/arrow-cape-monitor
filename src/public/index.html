@@ -620,6 +620,8 @@ function renderC5(d){
       top.append(el("span","t",r.time), el("span","who",r.sender));
       if(r.source==="context"){ const g=el("span","tag","follow-up");
         g.title="No account named — inherited from this broker's previous message"; top.appendChild(g); }
+      if(r.edited){ const g=el("span","tag","edited");
+        g.title = r.originalBody ? `Edited in WhatsApp. Originally:\n${r.originalBody}` : "Edited in WhatsApp"; top.appendChild(g); }
       const useSummary = r.summary && r.summaryVerified;
       const pre = el("pre","body", useSummary ? r.summary : r.update);
       if (useSummary) {

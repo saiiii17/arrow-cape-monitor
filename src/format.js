@@ -81,6 +81,9 @@ function toRows(groups, date) {
           update: u.body,
           summary: u.summary || null,
           summaryVerified: Boolean(u.summaryVerified),
+          // Edited in WhatsApp after it was sent: the text above is the current
+          // one, and the original is kept so the change is visible.
+          ...(u.edited ? { edited: true, originalBody: u.originalBody || null } : {}),
         });
       }
     }

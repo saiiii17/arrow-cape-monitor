@@ -133,7 +133,7 @@ const server = http.createServer(async (req, res) => {
     }
     const dir = c3.cacheDir();
     const cached = fs.existsSync(dir)
-      ? fs.readdirSync(dir).filter((f) => f.endsWith(".json")).map((f) => f.replace(".json", "")).sort()
+      ? fs.readdirSync(dir).filter((f) => /^\d{4}-\d{2}-\d{2}\.json$/.test(f)).map((f) => f.replace(".json", "")).sort()
       : [];
     return json(res, 200, { dates, first: dates[0] || today, last: dates[dates.length - 1] || today, asOf, suggested, cached });
   }
@@ -143,7 +143,7 @@ const server = http.createServer(async (req, res) => {
     // ever extracted by the other one.
     const dir = require("./c3").cacheDir();
     const days = fs.existsSync(dir)
-      ? fs.readdirSync(dir).filter((f) => f.endsWith(".json")).map((f) => f.replace(".json", "")).sort()
+      ? fs.readdirSync(dir).filter((f) => /^\d{4}-\d{2}-\d{2}\.json$/.test(f)).map((f) => f.replace(".json", "")).sort()
       : [];
     return json(res, 200, { days });
   }

@@ -1,3 +1,4 @@
+const crypto = require("crypto");
 require("dotenv").config();
 const fs = require("fs");
 const path = require("path");
@@ -66,16 +67,33 @@ function cacheDir() {
 async function recordsFor(date, { refresh = false, onProgress } = {}) {
   fs.mkdirSync(cacheDir(), { recursive: true });
   const file = path.join(cacheDir(), `${date}.json`);
+  const day = messagesForDate(messages(), date, START, END);
+  // What the day's extraction was built from. The day cache used to be served
+  // for the rest of the day once written, so a message arriving -- or being
+  // edited -- after the first view never reached C3.
+  const sig = crypto.createHash("sha1").update(day.map((m) => `${m.id || ""}|${m.time}|${m.body}`).join("\n")).digest("hex").slice(0, 16);
+
   if (!refresh && fs.existsSync(file)) {
     const cached = JSON.parse(fs.readFileSync(file, "utf8"));
-    // An explicit "nothing here" marker is a legitimate cached result.
-    return Array.isArray(cached) ? cached : [];
+    // Past days written before signatures existed are trusted as they are;
+    // anything carrying a signature is used only while it still matches.
+    if (Array.isArray(cached)) return cached;
+    if (cached && cached.sig === undefined) return [];            // legacy "nothing here" marker
+    if (cached && cached.sig === sig) return cached.records || [];
   }
 
-  const day = messagesForDate(messages(), date, START, END);
   if (!day.length) return [];
 
-  const records = await extractDay(day, { onProgress });
+  // Batches already extracted for this day are reused, so a change costs only
+  // the batch it falls in.
+  const batchFile = path.join(cacheDir(), `${date}.batches.json`);
+  let batches = {};
+  try { batches = JSON.parse(fs.readFileSync(batchFile, "utf8")); } catch { /* first run */ }
+  const hk = (t) => crypto.createHash("sha1").update(t).digest("hex");
+  const batchCache = { get: (t) => batches[hk(t)], set: (t, v) => { batches[hk(t)] = v; } };
+
+  const records = await extractDay(day, { onProgress, batchCache });
+  try { fs.writeFileSync(batchFile, JSON.stringify(batches)); } catch { /* cache is an optimisation */ }
 
   if (records.length === 0) {
     // Provider trouble (batches failed) must not be cached: a poisoned empty
@@ -87,11 +105,11 @@ async function recordsFor(date, { refresh = false, onProgress } = {}) {
     }
     // The model ran cleanly and found no C3/WAFR content (e.g. a non-shipping
     // group). Cache that as a marker so the day is not re-extracted.
-    fs.writeFileSync(file, JSON.stringify({ empty: true, scanned: day.length, at: new Date().toISOString() }, null, 2));
+    fs.writeFileSync(file, JSON.stringify({ empty: true, sig, records: [], scanned: day.length, at: new Date().toISOString() }, null, 2));
     return [];
   }
 
-  fs.writeFileSync(file, JSON.stringify(records, null, 2));
+  fs.writeFileSync(file, JSON.stringify({ sig, records }, null, 2));
   return records;
 }
 

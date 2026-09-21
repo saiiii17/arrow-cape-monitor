@@ -78,7 +78,7 @@ function renderBatch(messages, offset) {
 
 // Batches are small so one bad message cannot poison a whole day, and so the
 // model keeps every rate in view.
-async function extractDay(allDayMessages, { batchSize = Number(process.env.C3_BATCH_SIZE || 6), onProgress } = {}) {
+async function extractDay(allDayMessages, { batchSize = Number(process.env.C3_BATCH_SIZE || 6), onProgress, batchCache } = {}) {
   // The ballaster list is parsed deterministically elsewhere; sending it to the
   // model wastes tokens and yields rate-less duplicates of the tonnage spine.
   const dayMessages = allDayMessages.filter((m) => !/BALLASTER LIST/i.test(m.body));
@@ -92,7 +92,12 @@ async function extractDay(allDayMessages, { batchSize = Number(process.env.C3_BA
   async function run(batch, offset, depth = 0) {
     const user = `Today is ${dayMessages[0]?.date}. Extract records from these ${batch.length} broker messages.\n\n${renderBatch(batch, offset)}`;
     try {
-      const out = await completeJson(SYSTEM, user);
+      // The prompt text IS the key: same messages at the same positions give
+      // the same answer. Re-extracting today after one new or edited message
+      // then only pays for the batch that changed, not the whole day.
+      const cached = batchCache && batchCache.get(user);
+      const out = cached || await completeJson(SYSTEM, user);
+      if (!cached && batchCache) batchCache.set(user, out);
       for (const r of out.records || []) {
         const src = dayMessages[r.i];
         if (!src) continue;

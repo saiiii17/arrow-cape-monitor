@@ -21,7 +21,7 @@ const FMT = new Intl.DateTimeFormat("en-GB", {
   hour: "2-digit", minute: "2-digit", hour12: false,
 });
 
-function toRecord(unixSeconds, sender, body) {
+function toRecord(unixSeconds, sender, body, id) {
   const parts = Object.fromEntries(FMT.formatToParts(new Date(unixSeconds * 1000)).map((p) => [p.type, p.value]));
   const hour = Number(parts.hour) % 24;
   return {
@@ -31,17 +31,91 @@ function toRecord(unixSeconds, sender, body) {
     sender,
     body: String(body || "").trim(),
     live: true,
+    // WhatsApp's own message id. Two identical messages sent in the same
+    // minute are two messages, and only the id can tell them apart.
+    ...(id ? { id: String(id) } : {}),
   };
 }
 
-function append(groupName, records) {
-  if (!records.length) return 0;
+// The one write path for captured messages. Returns what changed:
+//   added    -- messages not seen before
+//   edited   -- a known message whose text changed (someone edited it)
+//   adopted  -- a row saved before ids existed, now matched to its id
+//
+// Identity is WhatsApp's message id whenever there is one. Keying on
+// date+minute+text merged a genuine repeat -- the same text sent twice in a
+// minute -- into one message, and made an edited message look like a new one.
+function upsert(groupName, records) {
+  const out = { added: 0, edited: 0, adopted: 0 };
+  if (!records.length) return out;
   fs.mkdirSync(DIR, { recursive: true });
-  const existing = new Set(load(groupName).map(keyOf));
-  const fresh = records.filter((r) => r.body && !existing.has(keyOf(r)));
-  if (!fresh.length) return 0;
-  fs.appendFileSync(file(groupName), fresh.map((r) => JSON.stringify(r)).join("\n") + "\n");
-  return fresh.length;
+  const stored = load(groupName);
+  const byId = new Map();
+  stored.forEach((r, i) => { if (r.id) byId.set(r.id, i); });
+  // Rows saved before ids were kept, by content, so the next pull matches them
+  // to their id instead of re-adding them as copies. One-for-one: two legacy
+  // repeats need two incoming messages to be matched.
+  const legacy = new Map();
+  stored.forEach((r, i) => {
+    if (r.id) return;
+    const k = keyOf(r);
+    if (!legacy.has(k)) legacy.set(k, []);
+    legacy.get(k).push(i);
+  });
+
+  // Every saved message by content, one-for-one. An incoming message WITHOUT
+  // an id (a chat export, or a pull that could not read ids) is matched
+  // against all of these -- checking only id-less rows re-added messages the
+  // live listener had already saved with their id.
+  const byContent = new Map();
+  for (const r of stored) byContent.set(keyOf(r), (byContent.get(keyOf(r)) || 0) + 1);
+
+  let rewrite = false;
+  const fresh = [];
+  const batchKeys = new Set();
+  for (const r of records) {
+    if (!r.body) continue;
+    if (r.id && byId.has(r.id)) {
+      const cur = stored[byId.get(r.id)];
+      if (cur.body !== r.body) {
+        // Edited in WhatsApp. Keep the first text so the change is visible.
+        stored[byId.get(r.id)] = { ...cur, body: r.body, edited: true,
+          originalBody: cur.originalBody || cur.body, editedAt: new Date().toISOString() };
+        out.edited++;
+        rewrite = true;
+      }
+      continue;
+    }
+    const k = keyOf(r);
+    const slots = legacy.get(k);
+    if (slots && slots.length) {
+      const i = slots.shift();
+      if (r.id) { stored[i] = { ...stored[i], id: r.id }; byId.set(r.id, i); out.adopted++; rewrite = true; }
+      continue;
+    }
+    if (!r.id) {
+      // No id: content is all there is.
+      if (byContent.get(k) > 0) { byContent.set(k, byContent.get(k) - 1); continue; }
+      if (batchKeys.has(k)) continue;
+      batchKeys.add(k);
+    } else {
+      byId.set(r.id, -1);
+    }
+    fresh.push(r);
+  }
+
+  if (rewrite) {
+    fs.writeFileSync(file(groupName), [...stored, ...fresh].map((r) => JSON.stringify(r)).join("\n") + "\n");
+  } else if (fresh.length) {
+    fs.appendFileSync(file(groupName), fresh.map((r) => JSON.stringify(r)).join("\n") + "\n");
+  }
+  out.added = fresh.length;
+  return out;
+}
+
+// Kept for callers that only need to know how many messages were new.
+function append(groupName, records) {
+  return upsert(groupName, records).added;
 }
 
 // Identity is date+time+body. The sender is deliberately excluded: the same
@@ -69,7 +143,10 @@ function load(groupName) {
 function stats(groupName) {
   const rows = load(groupName);
   const dates = [...new Set(rows.map((r) => r.date))].sort();
-  return { count: rows.length, days: dates.length, first: dates[0] || null, last: dates[dates.length - 1] || null };
+  let rev = 0;
+  try { rev = Math.round(fs.statSync(file(groupName)).mtimeMs); } catch { /* no file yet */ }
+  const edited = rows.filter((r) => r.edited).length;
+  return { count: rows.length, days: dates.length, first: dates[0] || null, last: dates[dates.length - 1] || null, edited, rev };
 }
 
 // Unlinking must remove the captured messages, not just the connection --
@@ -133,29 +210,27 @@ function restoreLatest() {
       const rows = body.split("\n").filter(Boolean);
       const target = path.join(DIR, `${base}.jsonl`);
       // Merge with anything captured since, keeping one copy of each message.
-      const existing = fs.existsSync(target) ? fs.readFileSync(target, "utf8").split("\n").filter(Boolean) : [];
-      const seen = new Set();
-      const merged = [];
-      for (const line of [...rows, ...existing]) {
-        try {
-          const m = JSON.parse(line);
-          const k = `${m.date} ${m.time} ${String(m.body).slice(0, 60)}`;
-          if (seen.has(k)) continue;
-          seen.add(k);
-          merged.push(line);
-        } catch { /* skip a damaged line */ }
+      const existingLines = fs.existsSync(target) ? fs.readFileSync(target, "utf8").split("\n").filter(Boolean) : [];
+      // Rows already in the file are never touched. Deduplicating them here is
+      // what dropped six genuine messages from a 2,213-message group; only the
+      // archive side is filtered, and one-for-one so real repeats survive.
+      const have = new Map();
+      const keyLine = (line) => {
+        try { const m = JSON.parse(line); return m.id || `${m.date} ${m.time} ${String(m.body).slice(0, 80)}`; } catch { return line; }
+      };
+      for (const line of existingLines) { const k = keyLine(line); have.set(k, (have.get(k) || 0) + 1); }
+      const add = [];
+      for (const line of rows) {
+        const k = keyLine(line);
+        if (have.get(k) > 0) { have.set(k, have.get(k) - 1); continue; }
+        add.push(line);
       }
-      fs.writeFileSync(target, merged.join("\n") + "\n");
-      // Against the UNIQUE existing lines: the merge also drops duplicates that
-      // were already in the file, which made a raw length difference negative.
-      const uniqueExisting = new Set(existing.map((line) => {
-        try { const m = JSON.parse(line); return `${m.date} ${m.time} ${String(m.body).slice(0, 60)}`; } catch { return line; }
-      })).size;
-      restored += Math.max(0, merged.length - uniqueExisting);
+      if (add.length) fs.appendFileSync(target, add.join("\n") + "\n");
+      restored += add.length;
       groups.push(base);
     } catch { /* ignore */ }
   }
   return { restored, groups };
 }
 
-module.exports = { restoreLatest, append, load, stats, toRecord, file, slug, clearAll };
+module.exports = { upsert, restoreLatest, append, load, stats, toRecord, file, slug, clearAll };

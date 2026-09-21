@@ -61,5 +61,48 @@ test("clearing an empty store archives nothing", () => {
   assert.strictEqual(r.archived, 0);
 });
 
+console.log("\nrepeats are kept, re-captures are not");
+
+const rec = (id, body = "RIO C5 170/10", time = "10:00") =>
+  ({ date: "2026-09-21", time, minutes: 600, sender: "Oly", body, live: true, ...(id ? { id } : {}) });
+
+test("the same text sent twice in one minute is two messages", () => {
+  store.clearAll();
+  store.append("Dup", [rec("A1"), rec("A2")]);
+  assert.strictEqual(store.load("Dup").length, 2);
+});
+
+test("the same message seen twice (live + pull) is saved once", () => {
+  store.append("Dup", [rec("A1")]);
+  assert.strictEqual(store.load("Dup").length, 2, "A1 was already saved");
+});
+
+test("messages saved before ids existed are not re-added by the next pull", () => {
+  store.clearAll();
+  store.append("Old", [rec(null, "FMG C5 180/10")]);          // legacy, no id
+  store.append("Old", [rec("B1", "FMG C5 180/10")]);          // same message, now with id
+  assert.strictEqual(store.load("Old").length, 1);
+});
+
+test("a C5 sender repeating the same post is shown twice", () => {
+  const { extractUpdates, groupByAccount } = require("./extract");
+  const day = [
+    { date: "2026-09-21", time: "10:00", minutes: 600, sender: "Oly", body: "RIO C5\n170/10\n19-21 Sept" },
+    { date: "2026-09-21", time: "15:00", minutes: 900, sender: "Oly", body: "RIO C5\n170/10\n19-21 Sept" },
+  ];
+  assert.strictEqual(groupByAccount(extractUpdates(day)).RIO.direct.length, 2);
+});
+
+test("a different broker relaying it is still folded in", () => {
+  const { extractUpdates, groupByAccount } = require("./extract");
+  const day = [
+    { date: "2026-09-21", time: "10:00", minutes: 600, sender: "Oly", body: "RIO C5\n170/10\n19-21 Sept" },
+    { date: "2026-09-21", time: "10:05", minutes: 605, sender: "Leo", body: "RIO C5\n170/10\n19-21 Sept" },
+  ];
+  const g = groupByAccount(extractUpdates(day));
+  assert.strictEqual(g.RIO.direct.length, 1);
+  assert.deepStrictEqual(g.RIO.direct[0].alsoFrom, ["Leo"]);
+});
+
 try { fs.rmSync(tmp, { recursive: true, force: true }); } catch { /* ignore */ }
 console.log(`\n${n} tests\n`);

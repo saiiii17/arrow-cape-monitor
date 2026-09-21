@@ -4,7 +4,7 @@ const QR = require("qrcode");
 const fs = require("fs");
 const path = require("path");
 const { execFileSync } = require("child_process");
-const { append, stats, toRecord, clearAll } = require("./livestore");
+const { append, upsert, stats, toRecord, clearAll } = require("./livestore");
 
 const PROFILE_DIR = path.join(process.env.WWEBJS_PATH || path.join(__dirname, "..", ".wwebjs_auth"), "session-monitor");
 
@@ -363,6 +363,7 @@ function start({ fresh = false } = {}) {
   const waVersion = process.env.WA_VERSION || "";
 
   const gen = bumpGeneration();
+  state.pageListener = false;
   // Every handler registered below is inert once a newer operation begins. A
   // killed browser keeps emitting for a while, and those late events used to
   // mutate the state of the client that had already replaced it.
@@ -581,6 +582,10 @@ function start({ fresh = false } = {}) {
     step(`Linked as ${state.me || "unknown"} — reading groups…`
       + (via === "probe" ? " (detected from the page — the library never signalled ready)" : ""));
 
+    // Live messages must not depend on how ready was reached.
+    const listening = await installPageListener();
+    if (!listening) step("Live listener fell back to the library — if new messages do not appear, press Force reset", "warn");
+
     // Ready: stop the fast poll. Watch slowly in case another window steals it.
     startClaimLoop(60_000);
 
@@ -591,6 +596,7 @@ function start({ fresh = false } = {}) {
     if (state.watching.c5 || state.watching.c3) {
       await syncAll();
       scheduleCatchUpPull();
+      startRecheck();
     } else {
       step("Linked. Now enter the C5 and C3 group names below and press Save groups & pull history", "info");
       if (!process.env.WWEBJS_PATH) {
@@ -618,13 +624,28 @@ function start({ fresh = false } = {}) {
   // message and the catch swallowed it -- nothing was ever captured. The chat
   // id is already on the message, and names come from the group list read out
   // of the local database.
-  client.on("message_create", async (msg) => {
+  client.on("message_create", (msg) => {
+    // The in-page listener is the primary source (see installPageListener);
+    // this stays as a fallback for when it could not be installed.
+    if (state.pageListener) return;
+    captureEvent({
+      chatId: (msg.id && msg.id.remote) || (msg.fromMe ? msg.to : msg.from) || "",
+      fromMe: msg.fromMe,
+      body: msg.body || (msg._data && msg._data.caption) || "",
+      timestamp: msg.timestamp,
+      notifyName: msg._data && (msg._data.notifyName || msg._data.pushName),
+      author: msg.author,
+      id: msg.id && msg.id._serialized,
+      via: "library",
+    });
+  });
+
+  async function captureEvent(msg) {
     // Counts every event, before any filtering, so "the listener never fires"
     // can be told apart from "it fired but the group did not match".
     state.eventsSeen = (state.eventsSeen || 0) + 1;
     try {
-      const chatId =
-        (msg.id && msg.id.remote) || (msg.fromMe ? msg.to : msg.from) || "";
+      const chatId = msg.chatId || "";
       state.lastEvent = {
         at: new Date().toISOString(),
         chatId: String(chatId),
@@ -643,30 +664,92 @@ function start({ fresh = false } = {}) {
       state.lastEvent.matchedBucket = bucket || null;
       if (!bucket) return;
 
-      const body = msg.body || (msg._data && msg._data.caption) || "";
+      const body = msg.body || "";
       if (!body) return;
 
       // Own messages carry no notifyName, so the raw id leaked through as the
       // sender. Use the linked account's name instead.
       const sender = msg.fromMe
         ? (state.me || "You")
-        : (msg._data && (msg._data.notifyName || msg._data.pushName)) ||
-          String(msg.author || "").split("@")[0] ||
-          "unknown";
+        : msg.notifyName || String(msg.author || "").split("@")[0] || "unknown";
 
-      const rec = toRecord(msg.timestamp, sender, body);
-      const n = append(name, [rec]);
-      if (n) {
-        state.captured += n;
+      const rec = toRecord(msg.timestamp, sender, body, msg.id);
+      const r = upsert(name, [rec]);
+      if (r.added) {
+        state.captured += r.added;
         state.lastMessageAt = new Date().toISOString();
         console.log(`  captured [${bucket}] ${name}: ${sender}: ${body.slice(0, 60)}`);
+      }
+      if (r.edited) {
+        state.edited = (state.edited || 0) + r.edited;
+        state.lastMessageAt = new Date().toISOString();
+        console.log(`  edited   [${bucket}] ${name}: ${sender}: ${body.slice(0, 60)}`);
       }
     } catch (e) {
       // Never silent again -- a swallowed error here cost hours.
       state.error = `capture failed: ${(e && e.message) || e}`;
       console.error("  capture error:", e && e.message);
     }
-  });
+  }
+
+  // Live messages, read straight from WhatsApp's own message collection.
+  //
+  // whatsapp-web.js only wires up its message_create event at the END of its
+  // ready sequence. When the page finishes loading but the library never gets
+  // there -- the case becomeReady("probe") exists for -- history still works
+  // (it reads the page directly) but live messages silently stop: eventsSeen
+  // stayed at 0 on a session that was otherwise fully up. So listen on the
+  // page ourselves, the same way history is read, independent of the library.
+  async function installPageListener() {
+    const page = client && client.pupPage;
+    if (!page) return false;
+    try {
+      if (!state.listenerPages) state.listenerPages = new WeakSet();
+      if (!state.listenerPages.has(page)) {
+        await page.exposeFunction("__acmOnMsg", (ev) => { if (isCurrent(gen)) captureEvent({ ...ev, via: "page" }); });
+        state.listenerPages.add(page);
+      }
+      const ok = await page.evaluate(() => {
+        if (window.__acmListening) return true;
+        const C = window.require("WAWebCollections");
+        if (!C || !C.Msg || typeof C.Msg.on !== "function") return false;
+        const send = (m) => {
+          try {
+            const id = m.id || {};
+            const ser = (w) => (w && (w._serialized || String(w))) || "";
+            window.__acmOnMsg({
+              chatId: ser(id.remote),
+              fromMe: Boolean(id.fromMe),
+              body: m.body || m.caption || "",
+              timestamp: m.t,
+              notifyName: m.notifyName || "",
+              author: ser(m.author),
+              id: ser(id),
+            });
+          } catch (e) { /* one bad message must not stop the listener */ }
+        };
+        // An edit changes the existing message's body in place. Its id is the
+        // original message's, so the store updates that row rather than adding
+        // a new one.
+        C.Msg.on("change:body change:caption", (m) => { if (m && m.id) send(m); });
+        C.Msg.on("add", (m) => {
+          if (!m || !m.isNewMsg) return;
+          // Still encrypted on arrival: wait for WhatsApp to decrypt it, as
+          // whatsapp-web.js itself does.
+          if (m.type === "ciphertext") { m.once("change:type", () => send(m)); return; }
+          send(m);
+        });
+        window.__acmListening = true;
+        return true;
+      });
+      state.pageListener = Boolean(ok);
+      return state.pageListener;
+    } catch (e) {
+      console.error("  [wa] could not install the page listener:", (e && e.message) || e);
+      state.pageListener = false;
+      return false;
+    }
+  }
 
   // Surface the Chromium process: a silent exit (OOM kill in a container) would
   // otherwise look identical to a slow start.
@@ -855,8 +938,8 @@ async function backfill(groupName, { since, limit = 50000 } = {}) {
   const { rows, diag } = await historySince(known.id, sinceUnix, limit);
   diag.opened = opened && opened.ok ? (opened.via || true) : `failed: ${(opened && opened.error) || "unknown"}`;
   diag.loadedBeforePull = loaded;
-  const records = rows.map((r) => toRecord(r.timestamp, r.sender, r.text));
-  const added = append(groupName, records);
+  const records = rows.map((r) => toRecord(r.timestamp, r.sender, r.text, r.id));
+  const { added, edited } = upsert(groupName, records);
 
   return {
     group: groupName,
@@ -864,6 +947,7 @@ async function backfill(groupName, { since, limit = 50000 } = {}) {
     since: since || "all",
     found: rows.length,
     added,
+    edited,
     opened: diag.opened,
     pages: diag.pages,
     loaded: `${diag.startCount} → ${diag.endCount}`,
@@ -928,7 +1012,7 @@ async function syncAll() {
         const where = !r.found ? "none found"
           : r.store.first === r.store.last ? `all on ${r.store.first}`
           : `found ${r.store.first} → ${r.store.last}`;
-        step(`${tag} · ${g}: ${r.found} message${r.found === 1 ? "" : "s"} ${asked}${r.added ? ` (${r.added} new)` : ""} — ${where}${why}`);
+        step(`${tag} · ${g}: ${r.found} message${r.found === 1 ? "" : "s"} ${asked}${r.added ? ` (${r.added} new)` : ""}${r.edited ? ` (${r.edited} edited)` : ""} — ${where}${why}`);
       } catch (e) {
         const dead = DEAD_PAGE.test(e.message || "");
         results.push({ tag, group: g, ok: false, error: e.message, dead });
@@ -950,6 +1034,8 @@ async function syncAll() {
   process.env.WA_CONNECTED = allOk ? "1" : "";
   if (allOk) {
     step(`Live — watching ${targets.map(([, g]) => g).join(", ")}. New messages appear automatically.`, "ok");
+    // Groups can be chosen after linking; the re-check must cover them too.
+    startRecheck();
   } else if (results.length) {
     const dead = results.some((r) => r.dead);
     if (dead) {
@@ -1003,6 +1089,11 @@ function snapshot() {
     claimedSession: Boolean(state.claimedSession),
     conflicts: state.reclaims || 0,
     eventsSeen: state.eventsSeen || 0,
+    // Which source is feeding live messages; false means only the library,
+    // which goes quiet whenever it never reached its own ready.
+    pageListener: Boolean(state.pageListener),
+    edited: state.edited || 0,
+    lastRecheck: state.lastRecheck || null,
     lastEvent: state.lastEvent || null,
     cleared: state.cleared || null,
     captured: state.captured,
@@ -1021,6 +1112,7 @@ function hardStop() {
   const c = client;
   client = null;
   clearTimeout(state.catchUpTimer);
+  clearInterval(state.recheckTimer);
   bumpGeneration(); // anything the old client still emits is now ignored
   clearTimeout(state.startTimer);
   clearTimeout(state.qrStaleTimer);
@@ -1646,6 +1738,10 @@ async function historySince(chatId, sinceUnix, maxMessages = 50000) {
           sender: x.id?.fromMe ? (window.__waMe || "You")
             : (x._data?.notifyName || x.notifyName || String(x.author || x.from || "").split("@")[0] || "unknown"),
           text: String(text),
+          // The raw model's key is authoritative; the serialised copy from
+          // getMessageModel does not always carry _serialized, and a history
+          // row without an id cannot be matched to its live copy or its edits.
+          id: (m.id && (m.id._serialized || (typeof m.id.toString === "function" ? m.id.toString() : ""))) || x.id?._serialized || "",
         });
       }
       return out;
@@ -1855,6 +1951,44 @@ function importExport(groupName, text, { since } = {}) {
   const records = rows.map((m) => ({ ...m, live: true }));
   const added = append(groupName, records);
   return { group: groupName, parsed: parsed.length, kept: rows.length, added, store: stats(groupName) };
+}
+
+// Today's messages are re-read on a timer and compared with what is saved.
+// The live listener catches edits as they happen; this catches anything it
+// missed -- an edit made while the server was restarting, or a message that
+// arrived during a reconnect. It reads the chat already held in memory (no
+// chat switching, no model calls) and only writes when something changed.
+const RECHECK_MS = Number(process.env.RECHECK_TODAY_MS || 120_000);
+function dubaiMidnightUnix() {
+  const d = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Dubai" }).format(new Date());
+  return Math.floor(new Date(`${d}T00:00:00+04:00`).getTime() / 1000);
+}
+async function recheckToday() {
+  if (state.status !== "ready" || state.syncing || !client) return;
+  if (!(await pageUsable())) return;
+  for (const [tag, g] of [["C5", state.watching.c5], ["C3", state.watching.c3]]) {
+    if (!g) continue;
+    const known = state.groups.find((x) => x.name === g) ||
+      state.groups.find((x) => String(x.name).toLowerCase() === String(g).toLowerCase());
+    if (!known) continue;
+    try {
+      const { rows } = await historySince(known.id, dubaiMidnightUnix(), 5000);
+      const r = upsert(g, rows.map((x) => toRecord(x.timestamp, x.sender, x.text, x.id)));
+      state.lastRecheck = new Date().toISOString();
+      if (r.edited) { state.edited = (state.edited || 0) + r.edited; step(`${tag} · ${g}: ${r.edited} message${r.edited === 1 ? "" : "s"} edited today — updated`); }
+      if (r.added) { state.captured += r.added; step(`${tag} · ${g}: ${r.added} message${r.added === 1 ? "" : "s"} from today picked up on re-check`); }
+    } catch (e) {
+      console.error(`  [wa] re-check of ${g} failed:`, (e && e.message) || e);
+    }
+  }
+}
+function startRecheck() {
+  const gen = generation;
+  clearInterval(state.recheckTimer);
+  state.recheckTimer = setInterval(() => {
+    if (!isCurrent(gen)) return clearInterval(state.recheckTimer);
+    recheckToday().catch(() => {});
+  }, RECHECK_MS);
 }
 
 // Right after a device is linked, WhatsApp keeps copying history from the phone

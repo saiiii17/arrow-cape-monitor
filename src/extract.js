@@ -98,10 +98,11 @@ function dedupe(updates) {
   for (const u of updates) {
     const key = `${u.account}|${normalise(u.body)}`;
     const prior = seen.get(key);
-    if (prior) {
-      if (!prior.alsoFrom.includes(u.sender) && u.sender !== prior.sender) {
-        prior.alsoFrom.push(u.sender);
-      }
+    // The same sender posting the same text again is a second post -- a
+    // repeat or a re-send -- and is shown as one. Only a DIFFERENT sender
+    // carrying the same text is a relay of the first.
+    if (prior && prior.sender !== u.sender) {
+      if (!prior.alsoFrom.includes(u.sender)) prior.alsoFrom.push(u.sender);
       continue;
     }
     // Not byte-identical, but two brokers relaying one enquiry minutes apart
@@ -120,7 +121,7 @@ function dedupe(updates) {
     }
 
     const record = { ...u, alsoFrom: [], tokens };
-    seen.set(key, record);
+    if (!prior) seen.set(key, record);
     out.push(record);
   }
 
