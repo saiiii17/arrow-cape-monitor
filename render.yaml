@@ -1,26 +1,34 @@
-# Render blueprint (FREE tier). In Render: New → Blueprint → point at this repo.
-# Free tier notes:
-#  - The URL is permanent and independent of your Mac (runs in Render's cloud).
-#  - It sleeps after ~15 min idle and cold-starts (~1 min) on the next request.
-#  - No persistent disk on free, so a cold start resets the WhatsApp session —
-#    the owner re-scans the QR when he returns. Upgrade to 'starter' ($7/mo) for
-#    always-on + a persistent disk (add the disk block back then).
+# Render blueprint. In Render: New → Blueprint → point at this repo.
+#
+# Sizing (measured, see DEPLOY.md):
+#  - 1 CPU minimum. 0.1 CPU never finishes pairing; 0.5 is marginal.
+#  - 2 GB RAM minimum. Pairing loads every group on the account; 512 MB was
+#    OOM-killed at 127 groups and the linked account has ~330.
+#  - Always on. Sleeping kills the browser and drops the WhatsApp session.
+#
+# The persistent disk at /app/data holds everything that must survive a
+# redeploy: the WhatsApp login (so the owner does not re-scan), captured messages,
+# the chosen groups, and the extraction caches (so history is not re-paid).
 services:
   - type: web
     name: arrow-cape-monitor
     runtime: docker
-    plan: free
+    plan: standard          # 1 CPU / 2 GB
     healthCheckPath: /api/dates
+    disk:
+      name: data
+      mountPath: /app/data
+      sizeGB: 1
     envVars:
       - key: PORT
         value: 4321
+      - key: WWEBJS_PATH
+        value: /app/data/wwebjs_auth
       - key: C3_PROVIDER
         value: anthropic
       - key: C3_ANTHROPIC_MODEL
-        sync: false
+        sync: false     # the Anthropic model name; set in the Render dashboard
       - key: PUPPETEER_EXECUTABLE_PATH
         value: /usr/bin/chromium
       - key: ANTHROPIC_API_KEY
         sync: false     # set in the Render dashboard
-      - key: GROQ_API_KEY
-        sync: false

@@ -6,7 +6,7 @@ const PROVIDER = (process.env.C3_PROVIDER || "groq").toLowerCase();
 
 const MODEL =
   PROVIDER === "anthropic"
-    ? process.env.C3_ANTHROPIC_MODEL
+    ? process.env.C3_ANTHROPIC_MODEL // set in .env locally and in the host's dashboard
     : process.env.C3_MODEL || "openai/gpt-oss-120b";
 
 // ---------------------------------------------------------------------------
@@ -86,6 +86,7 @@ async function callGroq(system, user, maxTokens) {
 }
 
 async function callAnthropic(system, user, maxTokens) {
+  if (!MODEL) throw new Error("C3_ANTHROPIC_MODEL is not set — add the Anthropic model name to the environment");
   // Haiku 4.5 predates adaptive thinking and rejects output_config.effort, so
   // neither is sent. The system prompt already demands JSON-only output; the
   // prompt and parsing are identical to the Groq path to keep an A/B honest.
@@ -110,7 +111,7 @@ function isFatal(err) {
   return (
     err.status === 401 ||
     err.status === 403 ||
-    /API_KEY is not set|invalid[_ ]api[_ ]key|authentication/i.test(err.message || "") ||
+    /API_KEY is not set|C3_ANTHROPIC_MODEL is not set|invalid[_ ]api[_ ]key|authentication/i.test(err.message || "") ||
     // Billing failures are permanent for the whole run, not transient.
     /credit balance is too low|billing|quota|payment required/i.test(err.message || "")
   );
