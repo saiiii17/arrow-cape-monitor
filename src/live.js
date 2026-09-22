@@ -643,6 +643,7 @@ function start({ fresh = false } = {}) {
       notifyName: msg._data && (msg._data.notifyName || msg._data.pushName),
       author: msg.author,
       id: msg.id && msg.id._serialized,
+      kind: "new",
       via: "library",
     });
   });
@@ -659,6 +660,10 @@ function start({ fresh = false } = {}) {
         isGroup: String(chatId).endsWith("@g.us"),
         body: String(msg.body || "").slice(0, 40),
       };
+      // A message the owner sends in the chosen broadcast group goes out to
+      // every tagged chat. Checked before any other filter: the broadcast
+      // group is usually not one of the watched C5/C3 groups.
+      maybeRelay(msg).catch((e) => console.error("  [wa] broadcast-group relay failed:", (e && e.message) || e));
       if (!String(chatId).endsWith("@g.us")) return; // groups only
 
       if (!state.groups.length) await refreshGroups().catch(() => {});
@@ -720,7 +725,7 @@ function start({ fresh = false } = {}) {
         if (window.__acmListening) return true;
         const C = window.require("WAWebCollections");
         if (!C || !C.Msg || typeof C.Msg.on !== "function") return false;
-        const send = (m) => {
+        const send = (m, kind) => {
           try {
             const id = m.id || {};
             const ser = (w) => (w && (w._serialized || String(w))) || "";
@@ -732,19 +737,20 @@ function start({ fresh = false } = {}) {
               notifyName: m.notifyName || "",
               author: ser(m.author),
               id: ser(id),
+              kind: kind || "new",
             });
           } catch (e) { /* one bad message must not stop the listener */ }
         };
         // An edit changes the existing message's body in place. Its id is the
         // original message's, so the store updates that row rather than adding
         // a new one.
-        C.Msg.on("change:body change:caption", (m) => { if (m && m.id) send(m); });
+        C.Msg.on("change:body change:caption", (m) => { if (m && m.id) send(m, "edit"); });
         C.Msg.on("add", (m) => {
           if (!m || !m.isNewMsg) return;
           // Still encrypted on arrival: wait for WhatsApp to decrypt it, as
           // whatsapp-web.js itself does.
-          if (m.type === "ciphertext") { m.once("change:type", () => send(m)); return; }
-          send(m);
+          if (m.type === "ciphertext") { m.once("change:type", () => send(m, "new")); return; }
+          send(m, "new");
         });
         window.__acmListening = true;
         return true;
@@ -1316,24 +1322,119 @@ async function listChats() {
   return [...out.values()].sort((a, b) => String(a.name).localeCompare(String(b.name)));
 }
 
+// ---- Broadcast group ---------------------------------------------------------
+// The owner picks one WhatsApp group; every message THEY send in it is
+// broadcast to the tagged chats, and the app replies there with the result so
+// it can be driven from the phone without opening the dashboard. Guards, each
+// for a real failure:
+//   - only the owner's own messages (fromMe) trigger it -- anyone else in the
+//     group must not be able to broadcast from this account
+//   - edits are ignored -- fixing a typo must not send the message again
+//   - the app's own replies are ignored (by id, and by their prefix) -- or each
+//     "sent" confirmation would trigger another broadcast, forever
+//   - messages older than 10 minutes are ignored -- after a reconnect WhatsApp
+//     can deliver a backlog, and last night's message must not go out now
+const RELAY_FILE = process.env.RELAY_FILE || path.join(__dirname, "..", "data", "broadcast-relay.json");
+const RELAY_MAX_AGE_S = Number(process.env.RELAY_MAX_AGE_S || 600);
+const RELAY_REPLY = /^(✅|⚠️|⏳) Broadcast/;
+
+function loadRelay() {
+  try {
+    const r = JSON.parse(fs.readFileSync(RELAY_FILE, "utf8"));
+    return { enabled: Boolean(r.enabled && r.sourceId), sourceId: String(r.sourceId || ""), sourceName: String(r.sourceName || "") };
+  } catch {
+    return { enabled: false, sourceId: "", sourceName: "" };
+  }
+}
+
+function saveRelay(cfg = {}) {
+  const c = {
+    sourceId: String(cfg.sourceId || "").trim(),
+    sourceName: String(cfg.sourceName || "").slice(0, 200),
+  };
+  c.enabled = Boolean(cfg.enabled) && Boolean(c.sourceId);
+  fs.mkdirSync(path.dirname(RELAY_FILE), { recursive: true });
+  fs.writeFileSync(RELAY_FILE, JSON.stringify(c, null, 2));
+  return c;
+}
+
+// Ids of messages this app sent, so its own posts are never heard as commands.
+const appSent = new Set();
+function rememberSent(m) {
+  const id = m && m.id && (m.id._serialized || String(m.id));
+  if (!id) return;
+  appSent.add(id);
+  if (appSent.size > 1000) appSent.delete(appSent.values().next().value);
+}
+const relaySeen = new Set();
+
+async function replyInRelay(text, { dryRun = false } = {}) {
+  const cfg = loadRelay();
+  if (!cfg.sourceId) return;
+  if (dryRun || state.status !== "ready" || !client) { console.log(`  [wa] broadcast-group reply (not sent): ${text}`); return; }
+  try { rememberSent(await client.sendMessage(cfg.sourceId, text)); }
+  catch (e) { console.error("  [wa] could not reply in the broadcast group:", (e && e.message) || e); }
+}
+
+const bcQueue = [];
+function runNextQueued() {
+  const next = bcQueue.shift();
+  if (next) startGroupBroadcast(next.text, next.opts);
+}
+
+async function startGroupBroadcast(text, opts = {}) {
+  try {
+    const st = await broadcast(text, { ...opts, origin: "group" });
+    if (st.total > 3) await replyInRelay(`⏳ Broadcasting to ${st.total} chats…`, opts);
+  } catch (e) {
+    await replyInRelay(`⚠️ Broadcast not sent: ${e.message}`, opts);
+    runNextQueued();
+  }
+}
+
+// Decide whether an incoming event is a broadcast command. Exported for tests.
+async function maybeRelay(ev, opts = {}) {
+  const cfg = loadRelay();
+  if (!cfg.enabled || String(ev.chatId || "") !== cfg.sourceId) return "not-relay";
+  if (ev.kind === "edit") return "edit";
+  if (!ev.fromMe) return "not-owner";
+  if (ev.id && appSent.has(ev.id)) return "own-reply";
+  const body = String(ev.body || "").trim();
+  if (!body) return "empty";
+  if (RELAY_REPLY.test(body)) return "own-reply";
+  if (ev.id) { if (relaySeen.has(ev.id)) return "duplicate"; relaySeen.add(ev.id); }
+  const age = Date.now() / 1000 - Number(ev.timestamp || 0);
+  if (ev.timestamp && age > RELAY_MAX_AGE_S) {
+    step("Broadcast group: skipped a message older than 10 minutes (delivered late after a reconnect)", "warn");
+    return "stale";
+  }
+  step(`Broadcast group: new message from ${cfg.sourceName || "the broadcast group"} — broadcasting`);
+  if (bc.running) { bcQueue.push({ text: body, opts }); return "queued"; }
+  await startGroupBroadcast(body, opts);
+  return "sent";
+}
+
 const bc = { running: false, results: [] };
 function broadcastStatus() {
   return { ...bc, results: bc.results.map((r) => ({ ...r })) };
 }
 
-async function broadcast(text, { dryRun = false } = {}) {
+async function broadcast(text, { dryRun = false, origin = "app" } = {}) {
   const body = String(text || "").trim();
   if (!body) throw new Error("Type a message first");
   if (bc.running) throw new Error("A broadcast is already sending — wait for it to finish");
   if (!dryRun && (state.status !== "ready" || !client)) throw new Error("WhatsApp is not connected — link it on the WhatsApp tab first");
-  const targets = loadTags();
+  // The broadcast group itself is never a target: sending into it would be
+  // heard as a new message there and broadcast again, forever.
+  const relay = loadRelay();
+  const targets = loadTags().filter((t) => !(relay.sourceId && t.id === relay.sourceId));
   if (!targets.length) throw new Error("No chats tagged — tick at least one chat");
   if (targets.length > BROADCAST_MAX) {
     throw new Error(`${targets.length} chats are tagged; the limit is ${BROADCAST_MAX} per broadcast to keep the account clear of WhatsApp's spam checks`);
   }
 
   Object.assign(bc, {
-    running: true, id: Date.now(), dryRun, text: body,
+    running: true, id: Date.now(), dryRun, origin, text: body,
     total: targets.length, done: 0, sent: 0, failed: 0,
     startedAt: new Date().toISOString(), finishedAt: null,
     results: targets.map((t) => ({ id: t.id, name: t.name, state: "waiting" })),
@@ -1351,7 +1452,7 @@ async function broadcast(text, { dryRun = false } = {}) {
       }
       r.state = "sending";
       try {
-        if (!dryRun) await client.sendMessage(targets[i].id, body);
+        if (!dryRun) rememberSent(await client.sendMessage(targets[i].id, body));
         r.state = "sent"; r.at = new Date().toISOString();
         bc.sent++;
       } catch (e) {
@@ -1367,6 +1468,13 @@ async function broadcast(text, { dryRun = false } = {}) {
     bc.running = false;
     bc.finishedAt = new Date().toISOString();
     step(`Broadcast${dryRun ? " (dry run)" : ""} finished: ${bc.sent} sent${bc.failed ? `, ${bc.failed} failed` : ""}`, bc.failed ? "warn" : "ok");
+    if (origin === "group") {
+      const failedNames = bc.results.filter((r) => r.state === "failed").map((r) => r.name);
+      await replyInRelay(bc.failed
+        ? `⚠️ Broadcast sent to ${bc.sent} of ${bc.total} chats. Failed: ${failedNames.slice(0, 10).join(", ")}${failedNames.length > 10 ? "…" : ""}`
+        : `✅ Broadcast sent to ${bc.sent} chat${bc.sent === 1 ? "" : "s"}`, { dryRun });
+    }
+    runNextQueued();
   })().catch((e) => {
     bc.running = false;
     bc.finishedAt = new Date().toISOString();
@@ -2223,4 +2331,4 @@ function environmentInfo() {
   };
 }
 
-module.exports = { listChats, loadTags, saveTags, broadcast, broadcastStatus, pageState, clearStaleProfileLockAsync, wipeSessionAsync, start, snapshot, backfill, syncAll, prewarm, environmentInfo, probeModules, tryHydrate, diagnoseHistoryInternals, historySince, openChatByName, inspectAfterOpen, setWatching, logout, send, refreshGroups, importExport, clearStaleProfileLock, wipeSession };
+module.exports = { loadRelay, saveRelay, maybeRelay, listChats, loadTags, saveTags, broadcast, broadcastStatus, pageState, clearStaleProfileLockAsync, wipeSessionAsync, start, snapshot, backfill, syncAll, prewarm, environmentInfo, probeModules, tryHydrate, diagnoseHistoryInternals, historySince, openChatByName, inspectAfterOpen, setWatching, logout, send, refreshGroups, importExport, clearStaleProfileLock, wipeSession };

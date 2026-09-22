@@ -2,9 +2,18 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Arrow Cape Monitor</title>
-<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='13' font-size='13'>&#9875;</text></svg>">
+<!-- Installable on iPhone: Safari → Share → Add to Home Screen opens it
+     full-screen with this icon, like a native app. -->
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="apple-touch-icon" href="/icon-180.png">
+<link rel="icon" type="image/png" href="/favicon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Arrow Cape">
+<meta name="theme-color" content="#0b1f3a">
 <style>
   :root{
     --bg:#f4f5f7; --panel:#fff; --sunk:#fafbfc; --ink:#14161a; --dim:#5f6672; --faint:#8b929e;
@@ -125,6 +134,14 @@
     border:1px solid var(--line);border-radius:8px;background:var(--panel);color:var(--ink);resize:vertical}
   .bcbar{display:flex;gap:10px;align-items:center;margin-top:10px}
   #bcList{max-height:460px;overflow:auto;border:1px solid var(--line2);border-radius:8px}
+  input[type="checkbox"]{width:auto}
+  #rlOn{appearance:none;-webkit-appearance:none;width:46px;height:28px;min-height:0!important;border-radius:14px;
+    background:var(--line);position:relative;cursor:pointer;border:0;padding:0;vertical-align:middle;transition:background .15s}
+  #rlOn::after{content:"";position:absolute;top:3px;left:3px;width:22px;height:22px;border-radius:50%;background:#fff;
+    box-shadow:0 1px 3px rgba(0,0,0,.3);transition:transform .15s}
+  #rlOn:checked{background:var(--good)}
+  #rlOn:checked::after{transform:translateX(18px)}
+  #rlOn:disabled{opacity:.45;cursor:default}
   .bcrow{display:flex;gap:10px;align-items:center;padding:7px 10px;border-bottom:1px solid var(--line2);cursor:pointer;font-size:13px}
   .bcrow:last-child{border-bottom:0}
   .bcrow:hover{background:var(--line2)}
@@ -182,18 +199,84 @@
   #toast.show{opacity:1}
   .load{padding:40px;text-align:center;color:var(--faint);font-size:13px}
   @media (max-width:1100px){.cols3,.cols2{grid-template-columns:1fr}}
+
+  /* ---- phone layout --------------------------------------------------------
+     The desktop layout above is untouched; everything here applies only on
+     narrow screens, which is how the app runs when installed on an iPhone. */
+  nav button i, nav button .sm{display:none}
+  #signout{margin-left:14px;font-size:12px;font-weight:500;color:var(--faint);text-decoration:none}
+  #signout:hover{color:var(--ink)}
+  @media (max-width:760px){
+    html,body{max-width:100%;overflow-x:hidden}
+    body{-webkit-tap-highlight-color:transparent}
+    /* Scrolls away with the page; the bottom tab bar is what stays put. */
+    header{position:static;display:flex;flex-wrap:wrap;gap:8px;
+      padding:calc(10px + env(safe-area-inset-top)) 14px 12px}
+    .brand{flex:1 1 100%;display:flex;align-items:center;font-size:18px;padding:2px 2px 4px}
+    #signout{margin-left:auto;font-size:14px}
+    .grow{display:none}
+    .ctl{flex:1 1 100%;flex-wrap:wrap;gap:8px}
+    .ctl label.k{flex:0 0 auto}
+    .ctl input[type="date"]{flex:1 1 calc(50% - 64px);width:auto;min-width:0}
+    #ctl-c3 #d3{flex-basis:calc(100% - 70px)}
+    .ctl .quick{flex:1 1 28%}
+    #refresh,#copy,#download{flex:1 1 0}
+    #send{flex:1 1 100%}
+    /* 16px stops iOS zooming the page when a field is tapped. */
+    select,input:not([type="checkbox"]):not([type="radio"]),button.btn,textarea{font-size:16px!important;min-height:42px;border-radius:10px}
+    .brand span{margin-left:.3em}
+    /* Digest actions mean nothing on the WhatsApp and Broadcast tabs. */
+    body[data-view="wa"] #refresh, body[data-view="wa"] #copy, body[data-view="wa"] #download, body[data-view="wa"] #send,
+    body[data-view="bc"] #refresh, body[data-view="bc"] #copy, body[data-view="bc"] #download, body[data-view="bc"] #send{display:none}
+    .bcrow{padding:11px 10px;font-size:15px}
+    #bcText{height:140px}
+    .bcbar #bcSend{flex:1 1 100%}
+    .bcbar #bcCount{flex:1 1 100%;text-align:center}
+    .bcbar{flex-wrap:wrap}
+    .bcrow input[type="checkbox"]{width:20px;height:20px}
+    input[type="date"]{font-size:15px!important}
+    button.btn{padding:8px 12px}
+    label.k{font-size:11px}
+    /* Bottom tab bar, like a native iOS app. */
+    nav{position:fixed;left:0;right:0;bottom:0;z-index:40;margin:0;border:0;border-radius:0;
+      border-top:1px solid var(--line);display:grid;grid-template-columns:repeat(5,1fr);gap:0;
+      padding:6px 4px calc(6px + env(safe-area-inset-bottom));
+      background:rgba(255,255,255,.86);-webkit-backdrop-filter:saturate(180%) blur(18px);backdrop-filter:saturate(180%) blur(18px)}
+    nav button{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;
+      padding:5px 0;font-size:10.5px;font-weight:600;color:var(--faint);border-radius:10px;min-height:48px}
+    nav button i{display:block;font-style:normal;font-size:22px;line-height:1;filter:grayscale(1);opacity:.55}
+    nav button .lg{display:none}
+    nav button .sm{display:block}
+    nav button[aria-selected="true"]{background:none;box-shadow:none;color:var(--accent)}
+    nav button[aria-selected="true"] i{filter:none;opacity:1}
+    main{padding:14px 12px calc(96px + env(safe-area-inset-bottom))}
+    .bar{margin-bottom:10px}
+    .bar h2{font-size:19px}
+    .card h3{font-size:14px}
+    .cols2,.cols3{gap:12px}
+    table{font-size:13px}
+    .scroll{max-height:none}
+    #bcList{max-height:52vh}
+    #toast{bottom:calc(84px + env(safe-area-inset-bottom));max-width:calc(100% - 32px);text-align:center}
+  }
+  @media (max-width:760px) and (prefers-color-scheme:dark){
+    nav{background:rgba(23,26,31,.86)}
+  }
+  /* Touch screens have no hover: the original-message popover would stick.
+     A tap on the row pins the original under it instead (see attachOriginal). */
+  @media (hover:none){ #pop{display:none!important} }
 </style>
 </head>
 <body>
 
 <header>
-  <div class="brand">Arrow Cape <span>· monitor</span><span id="brandLive" hidden class="livedot" title="Live — capturing WhatsApp"></span></div>
+  <div class="brand">Arrow Cape <span>· monitor</span><span id="brandLive" hidden class="livedot" title="Live — capturing WhatsApp"></span><a id="signout" href="/api/logout" hidden>Sign out</a></div>
   <nav role="tablist">
-    <button role="tab" id="tab-c5" aria-selected="true">C5 Accounts</button>
-    <button role="tab" id="tab-c3" aria-selected="false">C3 Cargo &amp; Tonnage</button>
-    <button role="tab" id="tab-mx" aria-selected="false">Matches</button>
-    <button role="tab" id="tab-wa" aria-selected="false">WhatsApp</button>
-    <button role="tab" id="tab-bc" aria-selected="false">Broadcast</button>
+    <button role="tab" id="tab-c5" aria-selected="true" aria-label="C5 Accounts"><i aria-hidden="true">📊</i><span class="lg">C5 Accounts</span><span class="sm">C5</span></button>
+    <button role="tab" id="tab-c3" aria-selected="false" aria-label="C3 Cargo and Tonnage"><i aria-hidden="true">🚢</i><span class="lg">C3 Cargo &amp; Tonnage</span><span class="sm">C3</span></button>
+    <button role="tab" id="tab-mx" aria-selected="false" aria-label="Matches"><i aria-hidden="true">🔗</i><span class="lg">Matches</span><span class="sm">Matches</span></button>
+    <button role="tab" id="tab-wa" aria-selected="false" aria-label="WhatsApp"><i aria-hidden="true">💬</i><span class="lg">WhatsApp</span><span class="sm">WhatsApp</span></button>
+    <button role="tab" id="tab-bc" aria-selected="false" aria-label="Broadcast"><i aria-hidden="true">📣</i><span class="lg">Broadcast</span><span class="sm">Broadcast</span></button>
   </nav>
   <span class="grow"></span>
   <div class="ctl" id="ctl-c5">
@@ -314,6 +397,21 @@
 
   <section id="v-bc" hidden>
     <div class="bar"><h2>Broadcast</h2><span class="sub" id="bcMeta">loading…</span></div>
+    <div class="card" style="margin-bottom:14px">
+      <h3>📣 Broadcast from a WhatsApp group</h3>
+      <div style="padding:14px 16px">
+        <p class="sub" style="margin:0 0 10px;line-height:1.55">
+          Pick one WhatsApp group. Every message <b>you</b> send in it goes to all the tagged chats below, and the app
+          replies there with the result — so you can broadcast straight from your phone.
+          Only your own new messages count: other members' messages and edits are ignored.
+        </p>
+        <div class="bcbar" style="flex-wrap:wrap">
+          <select id="rlGroup" style="flex:1;min-width:220px"><option value="">— choose a group —</option></select>
+          <label class="sub" style="white-space:nowrap;display:flex;align-items:center;gap:8px"><input type="checkbox" id="rlOn" role="switch"> On</label>
+          <span class="sub" id="rlState"></span>
+        </div>
+      </div>
+    </div>
     <div class="cols2">
       <div class="card">
         <h3>Message</h3>
@@ -353,6 +451,11 @@
 <div id="pop" hidden><div class="ph"></div><pre></pre><div class="hint">double-click the row to pin it open</div></div>
 
 <script>
+// Signed out (the session expired, or the password was changed): go to the
+// sign-in page instead of showing empty panels. No-op when sign-in is off.
+{ const f = window.fetch.bind(window);
+  window.fetch = async (...a) => { const r = await f(...a); if (r.status === 401) location.href = "/login"; return r; }; }
+fetch("/api/session").then(r=>r.json()).then(d=>{ if(d.auth) document.getElementById("signout").hidden=false; }).catch(()=>{});
 const $ = (s) => document.querySelector(s);
 const ACCTS = ["RIO","FMG","BHP"];
 let c5 = null, c3 = null, view = "c5";
@@ -385,6 +488,7 @@ function shortName(raw){
 /* ---------------- view switching ---------------- */
 function show(v){
   view=v;
+  document.body.dataset.view=v;
   prefs.set("tab",v);
   for (const [k,tab,sec] of [["c5","#tab-c5","#v-c5"],["c3","#tab-c3","#v-c3"],["mx","#tab-mx","#v-mx"],["wa","#tab-wa","#v-wa"],["bc","#tab-bc","#v-bc"]]){
     $(tab).setAttribute("aria-selected", String(k===v));
@@ -414,8 +518,37 @@ async function loadBroadcast(){
       ? `${bcChats.length} chats · ${bcChats.filter(c=>c.isGroup).length} groups`
       : "WhatsApp not connected — showing your saved tags only. Connect to tag more chats and send.";
   }catch(e){ $("#bcMeta").textContent="Could not load chats: "+e.message; }
-  renderBcList(); bcRefresh(); pollBroadcast();
+  renderBcList(); bcRefresh(); pollBroadcast(); loadRelayCfg();
 }
+let rlCfg={enabled:false,sourceId:"",sourceName:""};
+async function loadRelayCfg(){
+  try{ rlCfg=await (await fetch("/api/broadcast/relay")).json(); }catch{ /* keep last */ }
+  const sel=$("#rlGroup"); sel.innerHTML="";
+  const none=el("option",null,"— choose a group —"); none.value=""; sel.appendChild(none);
+  const groups=bcChats.filter(c=>c.isGroup);
+  // A saved choice stays visible even when WhatsApp is offline and the full
+  // group list cannot be read.
+  if(rlCfg.sourceId && !groups.some(g=>g.id===rlCfg.sourceId)) groups.unshift({id:rlCfg.sourceId,name:rlCfg.sourceName||rlCfg.sourceId});
+  for(const g of groups){ const o=el("option",null,g.name); o.value=g.id; sel.appendChild(o); }
+  sel.value=rlCfg.sourceId||"";
+  $("#rlOn").checked=Boolean(rlCfg.enabled);
+  $("#rlOn").disabled=!rlCfg.sourceId;
+  $("#rlState").textContent = rlCfg.enabled ? `On — messages you send in “${rlCfg.sourceName}” are broadcast`
+    : rlCfg.sourceId ? "Off" : "";
+  renderBcList();
+}
+async function saveRelayCfg(){
+  const sel=$("#rlGroup"), id=sel.value, name=id? sel.options[sel.selectedIndex].textContent : "";
+  const enabled = Boolean(id) && $("#rlOn").checked;
+  try{
+    rlCfg=await (await fetch("/api/broadcast/relay",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({sourceId:id,sourceName:name,enabled})})).json();
+    toast(rlCfg.enabled?`Broadcast group on: ${rlCfg.sourceName}`:"Broadcast group off");
+  }catch{ toast("Could not save"); }
+  loadRelayCfg();
+}
+$("#rlGroup").onchange=()=>{ if($("#rlGroup").value) $("#rlOn").checked=true; saveRelayCfg(); };
+$("#rlOn").onchange=saveRelayCfg;
 function renderBcList(){
   const q=$("#bcSearch").value.trim().toLowerCase(), only=$("#bcOnly").checked;
   const host=$("#bcList"); host.innerHTML="";
@@ -426,7 +559,9 @@ function renderBcList(){
     const lab=el("label","bcrow"), cb=el("input");
     cb.type="checkbox"; cb.checked=bcTags.has(c.id); cb.dataset.id=c.id;
     cb.onchange=()=>{ if(cb.checked) bcTags.set(c.id,{id:c.id,name:c.name}); else bcTags.delete(c.id); saveBcTags(); bcRefresh(); };
-    lab.append(cb, el("span","nm",c.name), el("span","sub",c.isGroup?"group":"chat"));
+    const isSource = rlCfg && rlCfg.sourceId===c.id;
+    lab.append(cb, el("span","nm",c.name), el("span","sub", isSource ? "broadcast group · skipped" : c.isGroup?"group":"chat"));
+    if(isSource) lab.title="This is the broadcast group — messages are sent FROM it, never to it";
     host.appendChild(lab);
   }
   if(!rows.length) host.appendChild(el("div","empty", q?"No chat matches that search.":"No chats yet — connect WhatsApp first."));
@@ -440,7 +575,7 @@ let bcRunning=false;
 function bcRefresh(){
   const n=bcTags.size;
   $("#bcTagged").textContent=String(n);
-  $("#bcCount").textContent = n ? `${n} chat${n===1?"":"s"} tagged` : "tick chats on the right";
+  $("#bcCount").textContent = n ? `${n} chat${n===1?"":"s"} tagged` : "tick chats in the list";
   $("#bcSend").disabled = bcRunning || !n;
 }
 $("#bcSearch").oninput=renderBcList;
@@ -873,6 +1008,7 @@ function attachOriginal(tr,rec){
   const who=String(rec.sender||"").replace(/\s+ARROW.*$/i,"");
   tr.onmouseenter=(e)=>showPop(e,when,who,rec.raw,tr);
   tr.onmouseleave=hidePop;
+  if (window.matchMedia && matchMedia("(hover:none)").matches) tr.onclick=(e)=>tr.ondblclick(e);
   tr.ondblclick=(e)=>{
     e.stopPropagation();
     hidePop();

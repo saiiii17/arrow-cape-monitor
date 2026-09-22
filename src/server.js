@@ -7,6 +7,7 @@ const { buildRundown } = require("./c3");
 const { matchAll } = require("./c3/match");
 const { PROVIDER: C3_PROVIDER } = require("./c3/llm");
 const live = require("./live");
+const auth = require("./auth");
 
 const PORT = Number(process.env.PORT || 4321);
 const PUBLIC_DIR = path.join(__dirname, "public");
@@ -44,6 +45,35 @@ function readBody(req) {
 
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://localhost:${PORT}`);
+
+  // ---- sign-in -------------------------------------------------------------
+  // Everything below is behind the password when APP_PASSWORD is set.
+  if (url.pathname === "/healthz") return json(res, 200, { ok: true });
+  if (url.pathname === "/login") {
+    if (!auth.enabled()) { res.writeHead(302, { Location: "/" }).end(); return; }
+    res.writeHead(200, { "Content-Type": "text/html", "Cache-Control": "no-store" });
+    fs.createReadStream(path.join(PUBLIC_DIR, "login.html")).pipe(res);
+    return;
+  }
+  if (url.pathname === "/api/login" && req.method === "POST") {
+    const ip = String(req.headers["x-forwarded-for"] || req.socket.remoteAddress || "").split(",")[0].trim();
+    if (!auth.allowAttempt(ip)) return json(res, 429, { error: "Too many attempts — wait a minute" });
+    const { password } = await readBody(req);
+    if (!auth.checkPassword(password)) return json(res, 401, { error: "Wrong password" });
+    res.writeHead(200, { "Content-Type": "application/json", "Set-Cookie": auth.sessionCookie(req) });
+    res.end(JSON.stringify({ ok: true }));
+    return;
+  }
+  if (url.pathname === "/api/logout") {
+    res.writeHead(302, { Location: auth.enabled() ? "/login" : "/", "Set-Cookie": auth.clearCookie() }).end();
+    return;
+  }
+  if (auth.enabled() && !auth.isPublic(url.pathname) && !auth.isLoggedIn(req)) {
+    if (url.pathname.startsWith("/api/")) return json(res, 401, { error: "Sign in required" });
+    res.writeHead(302, { Location: "/login" }).end();
+    return;
+  }
+  if (url.pathname === "/api/session") return json(res, 200, { auth: auth.enabled() });
 
   if (url.pathname === "/api/dates") {
     return json(res, 200, { dates: datesAvailable() });
@@ -315,6 +345,13 @@ const server = http.createServer(async (req, res) => {
       return json(res, 400, { error: e.message });
     }
   }
+  if (url.pathname === "/api/broadcast/relay") {
+    if (req.method === "POST") {
+      const cfg = await readBody(req);
+      return json(res, 200, live.saveRelay(cfg));
+    }
+    return json(res, 200, live.loadRelay());
+  }
   if (url.pathname === "/api/broadcast/status") {
     return json(res, 200, live.broadcastStatus());
   }
@@ -339,7 +376,8 @@ const server = http.createServer(async (req, res) => {
     res.writeHead(404).end("Not found");
     return;
   }
-  const types = { ".html": "text/html", ".css": "text/css", ".js": "text/javascript" };
+  const types = { ".html": "text/html", ".css": "text/css", ".js": "text/javascript",
+    ".png": "image/png", ".svg": "image/svg+xml", ".webmanifest": "application/manifest+json" };
   // No cache headers at all meant browsers applied heuristic caching to the
   // dashboard: after a code change the page kept serving the old markup and
   // script, so fixes looked like they had not landed and old bugs looked like

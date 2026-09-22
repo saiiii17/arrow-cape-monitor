@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Arrow Cape · Sign in</title>
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="apple-touch-icon" href="/icon-180.png">
+<link rel="icon" type="image/png" href="/favicon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Arrow Cape">
+<meta name="theme-color" content="#0b1f3a">
+<style>
+  :root{--ink:#14161a;--dim:#5f6672;--line:#e4e6ea;--accent:#1f6feb;--bad:#c0392b;--panel:#fff}
+  @media (prefers-color-scheme:dark){:root{--ink:#e9eaec;--dim:#9aa1ad;--line:#2b313a;--accent:#4c8ffb;--bad:#e06c5f;--panel:#171a1f}}
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{margin:0;font:15px/1.5 -apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",Roboto,sans-serif;color:var(--ink);
+    background:radial-gradient(120% 80% at 50% 0%,#1d4f8f 0%,#0b1f3a 55%,#07111f 100%);
+    display:flex;align-items:center;justify-content:center;
+    padding:max(24px,env(safe-area-inset-top)) 20px max(24px,env(safe-area-inset-bottom))}
+  .card{width:100%;max-width:360px;background:var(--panel);border-radius:20px;padding:30px 26px 26px;
+    box-shadow:0 20px 60px rgba(0,0,0,.35)}
+  .logo{width:64px;height:64px;border-radius:16px;display:block;margin:0 auto 14px;box-shadow:0 6px 18px rgba(11,31,58,.35)}
+  h1{margin:0;text-align:center;font-size:22px;letter-spacing:-.01em}
+  p.sub{margin:4px 0 22px;text-align:center;color:var(--dim);font-size:14px}
+  label{display:block;font-size:13px;color:var(--dim);margin-bottom:6px}
+  input{width:100%;font:inherit;font-size:17px;padding:13px 14px;border:1px solid var(--line);border-radius:12px;
+    background:transparent;color:var(--ink);outline:none}
+  input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(31,111,235,.18)}
+  button{width:100%;margin-top:14px;font:inherit;font-size:17px;font-weight:600;padding:13px;border:0;border-radius:12px;
+    background:var(--accent);color:#fff;cursor:pointer}
+  button:disabled{opacity:.6}
+  .err{min-height:20px;margin-top:10px;text-align:center;color:var(--bad);font-size:14px}
+</style>
+</head>
+<body>
+  <form class="card" id="f">
+    <img class="logo" src="/icon-180.png" alt="">
+    <h1>Arrow Cape</h1>
+    <p class="sub">Capesize monitor · sign in</p>
+    <label for="pw">Password</label>
+    <input id="pw" type="password" autocomplete="current-password" autofocus required>
+    <button id="go">Sign in</button>
+    <div class="err" id="err"></div>
+  </form>
+<script>
+  const f = document.getElementById("f"), err = document.getElementById("err"), go = document.getElementById("go");
+  f.onsubmit = async (e) => {
+    e.preventDefault();
+    go.disabled = true; err.textContent = "";
+    try {
+      const r = await fetch("/api/login", { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ password: document.getElementById("pw").value }) });
+      const d = await r.json().catch(() => ({}));
+      if (r.ok) { location.replace("/"); return; }
+      err.textContent = d.error || "Wrong password";
+    } catch { err.textContent = "Could not reach the server"; }
+    go.disabled = false;
+  };
+</script>
+</body>
+</html>
