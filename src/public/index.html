@@ -217,10 +217,15 @@
        last row of the column it is pinned by layout instead. overflow-x:hidden
        on body is also a known iOS fixed-position breaker, so it is gone. */
     html{height:100%}
+    /* A FIXED height, not a minimum: with min-height the page grew with long
+       content and the tab bar scrolled away with it. Only main scrolls. */
     body{max-width:100%;-webkit-tap-highlight-color:transparent;
-      min-height:100vh;min-height:100dvh;display:flex;flex-direction:column}
-    header{flex:0 0 auto}
-    main{flex:1 1 auto;min-height:0;overflow-y:auto;-webkit-overflow-scrolling:touch}
+      height:100vh;height:100dvh;overflow:hidden;display:flex;flex-direction:column}
+    header{flex:0 0 auto;padding:calc(8px + env(safe-area-inset-top)) 14px 8px}
+    main{flex:1 1 auto;min-height:0;overflow-y:auto;-webkit-overflow-scrolling:touch;overscroll-behavior:contain}
+    /* Date pickers and actions scroll with the content instead of taking up a
+       third of the screen on every tab. */
+    .phonectl{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 14px}
     /* Scrolls away with the page; the bottom tab bar is what stays put. */
     header{position:static;display:flex;flex-wrap:wrap;gap:8px;
       padding:calc(10px + env(safe-area-inset-top)) 14px 12px}
@@ -268,7 +273,7 @@
     .cols2,.cols3{gap:12px}
     table{font-size:13px}
     .scroll{max-height:none}
-    #bcList{max-height:52vh}
+    #bcList{max-height:none}
     #toast{bottom:calc(88px + env(safe-area-inset-bottom));max-width:calc(100% - 32px);text-align:center}
   }
   @media (max-width:760px) and (prefers-color-scheme:dark){
@@ -510,6 +515,10 @@ function shortName(raw){
 function show(v){
   view=v;
   document.body.dataset.view=v;
+  // All tabs share one scrolling area, so a new tab would otherwise open at
+  // the last tab's scroll position.
+  const sc=document.querySelector("main"); if(sc) sc.scrollTop=0;
+  scrollTo(0,0);
   prefs.set("tab",v);
   for (const [k,tab,sec] of [["c5","#tab-c5","#v-c5"],["c3","#tab-c3","#v-c3"],["mx","#tab-mx","#v-mx"],["wa","#tab-wa","#v-wa"],["bc","#tab-bc","#v-bc"]]){
     $(tab).setAttribute("aria-selected", String(k===v));
@@ -524,6 +533,39 @@ function show(v){
 $("#tab-c5").onclick=()=>show("c5"); $("#tab-c3").onclick=()=>show("c3");
 $("#tab-mx").onclick=()=>show("mx"); $("#tab-wa").onclick=()=>show("wa");
 $("#tab-bc").onclick=()=>show("bc");
+
+// On phones the header keeps only the brand: the date pickers and the action
+// buttons move into the scrolling content, and the tab bar becomes the page's
+// last row. Both move back on a wide screen.
+{
+  const moves=[...document.querySelectorAll("#ctl-c5,#ctl-c3,#refresh,#copy,#download,#send")]
+    .map(node=>({node, parent:node.parentElement, next:node.nextElementSibling}));
+  const mainEl=document.querySelector("main");
+  let host=null;
+  const placeControls=()=>{
+    const phone=matchMedia("(max-width:760px)").matches;
+    if(phone){
+      if(!host){ host=document.createElement("div"); host.className="phonectl"; }
+      if(host.parentElement!==mainEl) mainEl.insertBefore(host, mainEl.firstChild);
+      for(const m of moves) if(m.node.parentElement!==host) host.appendChild(m.node);
+    } else {
+      // Reverse order: each control is put back before the one that followed
+      // it, which must already be home. Forward order threw on the first
+      // insert -- the anchor was still inside the phone container -- and left
+      // every later control stranded there.
+      for(let i=moves.length-1;i>=0;i--){
+        const m=moves[i];
+        if(m.node.parentElement===m.parent) continue;
+        try{ m.parent.insertBefore(m.node, m.next && m.next.parentElement===m.parent ? m.next : null); }
+        catch{ m.parent.appendChild(m.node); }
+      }
+      if(host && host.parentElement) host.remove();
+    }
+  };
+  placeControls();
+  addEventListener("resize", placeControls);
+  addEventListener("orientationchange", placeControls);
+}
 
 // On phones the tab bar is the last row of the page, not part of the header,
 // so it is held in place by layout rather than position:fixed -- which iOS
