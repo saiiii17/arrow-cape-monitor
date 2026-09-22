@@ -374,6 +374,7 @@ function start({ fresh = false, phone } = {}) {
   const waVersion = process.env.WA_VERSION || "";
 
   const gen = bumpGeneration();
+  takeProfileLock(); // this process is about to own the browser profile
   state.pageListener = false;
   // Every handler registered below is inert once a newer operation begins. A
   // killed browser keeps emitting for a while, and those late events used to
@@ -1210,6 +1211,42 @@ async function wipeSessionAsync() {
     return false;
   }
 }
+
+// Which process owns the WhatsApp profile.
+//
+// Clearing the profile means SIGKILLing every Chromium using it, which cannot
+// tell a crashed leftover from a HEALTHY session owned by another running
+// instance. Starting a second server -- a test copy, a dev copy -- therefore
+// killed the live one's browser mid-session. The owner records its pid here so
+// others can see the profile is in use and leave it alone.
+const PROFILE_LOCK = path.join(PROFILE_DIR, "..", "owner.json");
+
+function profileOwner() {
+  try {
+    const { pid, at } = JSON.parse(fs.readFileSync(PROFILE_LOCK, "utf8"));
+    if (!pid || pid === process.pid) return null;
+    process.kill(pid, 0); // throws if that process is gone
+    return { pid, at };
+  } catch {
+    return null; // no lock, unreadable, or the owner has exited
+  }
+}
+
+function takeProfileLock() {
+  try {
+    fs.mkdirSync(path.dirname(PROFILE_LOCK), { recursive: true });
+    fs.writeFileSync(PROFILE_LOCK, JSON.stringify({ pid: process.pid, at: new Date().toISOString() }));
+  } catch { /* advisory only */ }
+}
+
+function releaseProfileLock() {
+  try {
+    const { pid } = JSON.parse(fs.readFileSync(PROFILE_LOCK, "utf8"));
+    if (pid === process.pid) fs.rmSync(PROFILE_LOCK, { force: true });
+  } catch { /* nothing to release */ }
+}
+
+process.on("exit", releaseProfileLock);
 
 // Wipe the stored session entirely. Needed when the saved credentials are
 // damaged -- the symptom is "couldn't link device" on an otherwise valid scan.
@@ -2365,4 +2402,4 @@ function environmentInfo() {
   };
 }
 
-module.exports = { loadRelay, saveRelay, maybeRelay, listChats, loadTags, saveTags, broadcast, broadcastStatus, pageState, clearStaleProfileLockAsync, wipeSessionAsync, start, snapshot, backfill, syncAll, prewarm, environmentInfo, probeModules, tryHydrate, diagnoseHistoryInternals, historySince, openChatByName, inspectAfterOpen, setWatching, logout, send, refreshGroups, importExport, clearStaleProfileLock, wipeSession };
+module.exports = { profileOwner, releaseProfileLock, loadRelay, saveRelay, maybeRelay, listChats, loadTags, saveTags, broadcast, broadcastStatus, pageState, clearStaleProfileLockAsync, wipeSessionAsync, start, snapshot, backfill, syncAll, prewarm, environmentInfo, probeModules, tryHydrate, diagnoseHistoryInternals, historySince, openChatByName, inspectAfterOpen, setWatching, logout, send, refreshGroups, importExport, clearStaleProfileLock, wipeSession };

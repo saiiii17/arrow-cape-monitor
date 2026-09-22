@@ -457,11 +457,19 @@ const savedWatch = live.snapshot().watching;
 if (savedWatch.c5) process.env.C5_GROUP = savedWatch.c5;
 if (savedWatch.c3) process.env.C3_GROUP = savedWatch.c3;
 
-try {
-  const cleared = live.clearStaleProfileLock();
-  if (cleared.length) console.log(`  cleared stale WhatsApp session: ${cleared.join(", ")}`);
-} catch {
-  /* nothing to clear */
+// Only clear leftovers when nobody else is using the profile: the clear is a
+// SIGKILL of every Chromium on it, and a second server (a test or dev copy)
+// must not take down a live session owned by another instance.
+const profileOwner = live.profileOwner();
+if (profileOwner) {
+  console.log(`  another instance (pid ${profileOwner.pid}) is using the WhatsApp profile — leaving it alone`);
+} else {
+  try {
+    const cleared = live.clearStaleProfileLock();
+    if (cleared.length) console.log(`  cleared stale WhatsApp session: ${cleared.join(", ")}`);
+  } catch {
+    /* nothing to clear */
+  }
 }
 
 // One-line environment fingerprint: on a container this is what tells you which
@@ -474,7 +482,9 @@ try {
 }
 
 // Start Chrome immediately so the QR is ready before anyone clicks Connect.
-try { live.prewarm(); } catch { /* non-fatal */ }
+// A second instance must not launch a browser on a profile someone else owns.
+if (profileOwner) console.log("  not starting WhatsApp here — the profile belongs to another instance");
+else try { live.prewarm(); } catch { /* non-fatal */ }
 
 server.listen(PORT, "0.0.0.0", () => {
   const dates = datesAvailable();

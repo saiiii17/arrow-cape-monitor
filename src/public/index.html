@@ -211,8 +211,16 @@
   #signout{margin-left:14px;font-size:12px;font-weight:500;color:var(--faint);text-decoration:none}
   #signout:hover{color:var(--ink)}
   @media (max-width:760px){
-    html,body{max-width:100%;overflow-x:hidden}
-    body{-webkit-tap-highlight-color:transparent}
+    /* A full-height flex column: header, scrolling content, tab bar. The bar
+       was position:fixed, which iOS moves out of place when the page is
+       shorter than the screen -- visible on C3/Matches with no data. As the
+       last row of the column it is pinned by layout instead. overflow-x:hidden
+       on body is also a known iOS fixed-position breaker, so it is gone. */
+    html{height:100%}
+    body{max-width:100%;-webkit-tap-highlight-color:transparent;
+      min-height:100vh;min-height:100dvh;display:flex;flex-direction:column}
+    header{flex:0 0 auto}
+    main{flex:1 1 auto;min-height:0;overflow-y:auto;-webkit-overflow-scrolling:touch}
     /* Scrolls away with the page; the bottom tab bar is what stays put. */
     header{position:static;display:flex;flex-wrap:wrap;gap:8px;
       padding:calc(10px + env(safe-area-inset-top)) 14px 12px}
@@ -242,7 +250,7 @@
     button.btn{padding:8px 12px}
     label.k{font-size:11px}
     /* Bottom tab bar, like a native iOS app. */
-    nav{position:fixed;left:0;right:0;bottom:0;z-index:40;margin:0;border:0;border-radius:0;
+    nav{flex:0 0 auto;z-index:40;margin:0;border:0;border-radius:0;
       border-top:1px solid var(--line);display:grid;grid-template-columns:repeat(5,1fr);gap:0;
       padding:6px 4px calc(6px + env(safe-area-inset-bottom));
       background:rgba(255,255,255,.86);-webkit-backdrop-filter:saturate(180%) blur(18px);backdrop-filter:saturate(180%) blur(18px)}
@@ -253,7 +261,7 @@
     nav button .sm{display:block}
     nav button[aria-selected="true"]{background:none;box-shadow:none;color:var(--accent)}
     nav button[aria-selected="true"] i{filter:none;opacity:1}
-    main{padding:14px 12px calc(96px + env(safe-area-inset-bottom))}
+    main{padding:14px 12px 20px}
     .bar{margin-bottom:10px}
     .bar h2{font-size:19px}
     .card h3{font-size:14px}
@@ -261,7 +269,7 @@
     table{font-size:13px}
     .scroll{max-height:none}
     #bcList{max-height:52vh}
-    #toast{bottom:calc(84px + env(safe-area-inset-bottom));max-width:calc(100% - 32px);text-align:center}
+    #toast{bottom:calc(88px + env(safe-area-inset-bottom));max-width:calc(100% - 32px);text-align:center}
   }
   @media (max-width:760px) and (prefers-color-scheme:dark){
     nav{background:rgba(23,26,31,.86)}
@@ -516,6 +524,21 @@ function show(v){
 $("#tab-c5").onclick=()=>show("c5"); $("#tab-c3").onclick=()=>show("c3");
 $("#tab-mx").onclick=()=>show("mx"); $("#tab-wa").onclick=()=>show("wa");
 $("#tab-bc").onclick=()=>show("bc");
+
+// On phones the tab bar is the last row of the page, not part of the header,
+// so it is held in place by layout rather than position:fixed -- which iOS
+// mispositions when the page is shorter than the screen.
+{
+  const nav=document.querySelector("nav"), home=nav.parentElement, after=nav.nextElementSibling;
+  const placeNav=()=>{
+    const phone=matchMedia("(max-width:760px)").matches;
+    if(phone && nav.parentElement!==document.body) document.body.appendChild(nav);
+    else if(!phone && nav.parentElement!==home) home.insertBefore(nav, after);
+  };
+  placeNav();
+  addEventListener("resize", placeNav);
+  addEventListener("orientationchange", placeNav);
+}
 
 // ---- Broadcast -------------------------------------------------------------
 // Chats are tagged by id and the list is saved on the server, so tags survive
