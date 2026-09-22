@@ -32,3 +32,7 @@ services:
         value: /usr/bin/chromium
       - key: ANTHROPIC_API_KEY
         sync: false     # set in the Render dashboard
+      # Password for the dashboard. Without it the URL is open to anyone, and
+      # this app can broadcast from the linked WhatsApp account.
+      - key: APP_PASSWORD
+        sync: false     # set in the Render dashboard

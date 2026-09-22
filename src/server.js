@@ -479,5 +479,11 @@ try { live.prewarm(); } catch { /* non-fatal */ }
 server.listen(PORT, "0.0.0.0", () => {
   const dates = datesAvailable();
   console.log(`\n  C5 account monitor  →  http://localhost:${PORT}`);
+  // Said plainly at boot: an open deployment looks identical to a protected
+  // one until someone opens the URL, and this one can broadcast from the
+  // linked WhatsApp account.
+  console.log(auth.enabled()
+    ? "  sign-in: ON (APP_PASSWORD set)"
+    : "  sign-in: OFF — anyone with the URL can read the chats and broadcast. Set APP_PASSWORD to protect it.");
   console.log(`  ${dates.length} days loaded (${dates[0]} .. ${dates[dates.length - 1]})\n`);
 });
