@@ -133,6 +133,10 @@
   #bcText{width:100%;box-sizing:border-box;font:inherit;font-size:13.5px;line-height:1.5;padding:10px 12px;
     border:1px solid var(--line);border-radius:8px;background:var(--panel);color:var(--ink);resize:vertical}
   .bcbar{display:flex;gap:10px;align-items:center;margin-top:10px}
+  .pairbox{margin-top:16px;padding:12px 14px;border:1px dashed var(--line);border-radius:10px;background:var(--sunk)}
+  .paircode{font-family:var(--mono);font-size:34px;font-weight:700;letter-spacing:.14em;text-align:center;
+    padding:16px 10px;border-radius:12px;background:var(--accent-soft);color:var(--ink);user-select:all}
+  .pairsteps{margin:10px 0 0;padding-left:20px;line-height:1.7;font-size:13.5px}
   #bcList{max-height:460px;overflow:auto;border:1px solid var(--line2);border-radius:8px}
   input[type="checkbox"]{width:auto}
   #rlOn{appearance:none;-webkit-appearance:none;width:46px;height:28px;min-height:0!important;border-radius:14px;
@@ -343,6 +347,15 @@
           <button class="btn primary" id="waStart">Connect WhatsApp</button>
           <button class="btn" id="waLogout" title="Disconnect, forget the login, and delete captured messages">Unlink &amp; clear</button>
           <button class="btn" id="waReset" title="Kill any leftover browser and clear the session lock">Force reset</button>
+          <div class="pairbox">
+            <div class="sub" style="margin:0 0 8px;line-height:1.55"><b>Only have your phone?</b> A QR on this screen can't be
+              scanned by the phone showing it — link with your number instead.</div>
+            <div class="bcbar" style="margin-top:0;flex-wrap:wrap">
+              <input id="waPhone" type="tel" inputmode="numeric" autocomplete="tel"
+                placeholder="Number with country code, e.g. 971501234567" style="flex:1;min-width:220px">
+              <button class="btn" id="waPair">Link with phone number</button>
+            </div>
+          </div>
           <div id="waQr" style="margin-top:16px"></div>
         </div>
       </div>
@@ -642,14 +655,34 @@ function waRender(st){
   ol.scrollTop=ol.scrollHeight;
 
   // Connect is disabled while anything is in flight or already linked.
-  const busy=["starting","qr","authenticated","ready"].includes(st.status);
+  const busy=["starting","qr","code","authenticated","ready"].includes(st.status);
   const cb=$("#waStart"); cb.disabled=busy;
   cb.textContent = st.connected?"Connected ✓":st.status==="ready"?"Linked":busy?"Connecting…":"Connect WhatsApp";
   $("#waBackfill").disabled = st.status!=="ready" || st.syncing;
+  $("#waPair").disabled = busy;
   $("#waSave").disabled = st.syncing;
 
   const qr=$("#waQr");
-  if(st.qr){ qr.innerHTML=""; const i=new Image(); i.src=st.qr; i.width=280;
+  if(st.pairingCode){
+    // Shown as ABCD-EFGH: easier to read and type than eight letters in a row.
+    const c=String(st.pairingCode), pretty = c.length===8 ? `${c.slice(0,4)}-${c.slice(4)}` : c;
+    qr.innerHTML="";
+    qr.appendChild(el("div","sub",`Link code for ${st.pairPhone||"your number"}:`));
+    qr.appendChild(el("div","paircode",pretty));
+    // the owner switches from this app to WhatsApp to enter it: copying beats memorising.
+    const cp=el("button","btn","Copy code"); cp.style.cssText="margin-top:8px;width:100%";
+    cp.onclick=async()=>{ try{ await navigator.clipboard.writeText(c); toast("Code copied — paste it in WhatsApp"); }catch{ toast(pretty); } };
+    qr.appendChild(cp);
+    const ol=el("ol","pairsteps");
+    for(const t of ["A WhatsApp notification should appear on the phone — tap it. If not:",
+                    "WhatsApp → Settings → Linked Devices → Link a Device",
+                    "Tap “Link with phone number instead”",
+                    "Type the code above"]) ol.appendChild(el("li",null,t));
+    qr.appendChild(ol);
+    if(st.codeAge!=null) qr.appendChild(el("div","sub",
+      st.codeAge>170 ? "A new code is on its way — this one is about to expire" : `Valid for about ${Math.max(0,180-st.codeAge)}s · a new one appears automatically`));
+  }
+  else if(st.qr){ qr.innerHTML=""; const i=new Image(); i.src=st.qr; i.width=280;
     i.style.cssText="border-radius:8px;background:#fff;padding:10px"; qr.appendChild(i);
     // Only warn when the code is genuinely stale relative to the MEASURED
     // rotation interval; the old hardcoded "~20s" was a guess.
@@ -753,6 +786,30 @@ $("#waStart").onclick=async(e)=>{
       const st=await (await fetch("/api/wa/status")).json();
       waRender(st);
       if(st.qr||st.status==="ready"||st.status==="error") break;
+    }
+  } finally { e.target.disabled=false; }
+};
+// Phone-number linking: same fresh start as Connect, with the number.
+// localStorage directly: this runs before `prefs` is declared further down.
+try{ const p=localStorage.getItem("acm:waPhone"); if(p) $("#waPhone").value=p; }catch{ /* storage blocked */ }
+$("#waPair").onclick=async(e)=>{
+  const digits=$("#waPhone").value.replace(/\D/g,"");
+  if(digits.length<8||digits.length>15){ toast("Enter the number with its country code, e.g. 971501234567"); return; }
+  prefs.set("waPhone",digits);
+  e.target.disabled=true;
+  $("#waPhase").innerHTML='<span class="spin"></span>Requesting a link code for your number…';
+  $("#waDot").className="dot busy";
+  $("#waQr").innerHTML='<span class="sub">getting your code…</span>';
+  try{
+    const r=await fetch("/api/wa/start?phone="+encodeURIComponent(digits),{method:"POST"});
+    const d=await r.json();
+    if(!r.ok){ toast(d.error||"Could not start"); $("#waQr").innerHTML=""; return; }
+    waRender(d);
+    for(let i=0;i<60;i++){
+      await new Promise(r=>setTimeout(r,700));
+      const st=await (await fetch("/api/wa/status")).json();
+      waRender(st);
+      if(st.pairingCode||st.status==="ready"||st.status==="error") break;
     }
   } finally { e.target.disabled=false; }
 };

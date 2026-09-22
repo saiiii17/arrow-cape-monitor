@@ -274,14 +274,25 @@ function bucketFor(chatName) {
   return null;
 }
 
-function start({ fresh = false } = {}) {
+function start({ fresh = false, phone } = {}) {
   if (state.syncing) { step("Ignoring restart during history pull", "warn"); return state; }
   supervisor.event("launch");
+
+  // Link with a phone number instead of a QR -- for someone with only the
+  // phone, who cannot scan a code shown on that same screen. Chosen by a fresh
+  // Connect, and kept for any restart during the same attempt so a crash does
+  // not silently fall back to a QR they have no way to scan.
+  if (fresh) {
+    const digits = String(phone || "").replace(/\D/g, "");
+    state.pairPhone = digits.length >= 8 && digits.length <= 15 ? digits : "";
+    state.pairingCode = null;
+    state.codeAt = null;
+  }
 
   // Already sitting on an unscanned QR? That IS a fresh, unlinked session and
   // WhatsApp rotates the code every ~20s anyway. Reuse it instead of paying the
   // full Chrome boot again (~60s on a free-tier container).
-  if (fresh && state.status === "qr" && state.qrDataUrl && client) {
+  if (fresh && !state.pairPhone && state.status === "qr" && state.qrDataUrl && client) {
     step("QR already active — scan it now");
     return state;
   }
@@ -383,6 +394,9 @@ function start({ fresh = false } = {}) {
     // hang seen on the free-tier container. protocolTimeout does not cover it.
     authTimeoutMs: LAUNCH_MS,
     qrMaxRetries: 0,
+    // Phone-number linking: WhatsApp issues an 8-character code (refreshed
+    // every 3 minutes) and pops a notification on the phone asking for it.
+    ...(state.pairPhone ? { pairWithPhoneNumber: { phoneNumber: state.pairPhone, showNotification: true, intervalMs: 180000 } } : {}),
     // NOTE: takeoverOnConflict was tried and made things worse on this build --
     // it produced a permanent "Use here" conflict even with no other client
     // open. The plain config below is what actually reached "ready".
@@ -447,6 +461,18 @@ function start({ fresh = false } = {}) {
   });
   bindGuarded(client);
 
+  client.on("code", (code) => {
+    clearTimeout(state.startTimer); // a code arriving is the launch succeeding
+    const first = state.status !== "code";
+    state.status = "code";
+    state.pairingCode = String(code || "");
+    state.codeAt = Date.now();
+    state.qrDataUrl = null;
+    step(first
+      ? "Link code ready — on the phone: Linked Devices → Link a device → Link with phone number instead, then type the code"
+      : "New link code (they refresh every 3 minutes)");
+  });
+
   client.on("qr", async (qr) => {
     clearTimeout(state.startTimer);
     if (state.status !== "qr") step("Waiting for QR scan — phone → Linked Devices → Link a Device");
@@ -504,6 +530,8 @@ function start({ fresh = false } = {}) {
 
   client.on("authenticated", () => {
     supervisor.event("authenticated");
+    state.pairingCode = null; // linked: the code has done its job
+    state.pairPhone = "";
     clearTimeout(state.qrStaleTimer);
     state.status = "authenticated";
     markLinked(true); // from here on, sample data is never shown
@@ -1100,6 +1128,10 @@ function snapshot() {
     me: state.me,
     qr: state.qrDataUrl,
     qrAge: state.qrAt && state.status === "qr" ? Math.round((Date.now() - state.qrAt) / 1000) : null,
+    pairingCode: state.status === "code" ? state.pairingCode : null,
+    codeAge: state.status === "code" && state.codeAt ? Math.round((Date.now() - state.codeAt) / 1000) : null,
+    // Last four digits only: enough to recognise, not enough to leak.
+    pairPhone: state.pairPhone ? `…${state.pairPhone.slice(-4)}` : "",
     // Median of the observed gaps between QR refreshes, once we have any.
     qrRotateSecs: (state.qrIntervals || []).length
       ? [...state.qrIntervals].sort((a, b) => a - b)[Math.floor(state.qrIntervals.length / 2)]
@@ -1209,6 +1241,8 @@ function logout({ unlink = true, wipe = false, clearData = false } = {}) {
   state.status = "idle";
   state.qrDataUrl = null;
   state.qrAt = null;
+  state.pairingCode = null;
+  state.pairPhone = "";
   state.me = null;
   state.groups = [];
   state.error = null;

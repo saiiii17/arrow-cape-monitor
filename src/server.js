@@ -214,7 +214,15 @@ const server = http.createServer(async (req, res) => {
 
   if (url.pathname === "/api/wa/start" && req.method === "POST") {
     // Connect = always a fresh QR. Pass ?resume=1 to reuse a stored login.
-    live.start({ fresh: url.searchParams.get("resume") !== "1" });
+    // ?phone=<digits with country code> links with a code instead of a QR.
+    const phone = url.searchParams.get("phone");
+    if (phone != null) {
+      const digits = phone.replace(/\D/g, "");
+      if (digits.length < 8 || digits.length > 15) {
+        return json(res, 400, { error: "Enter the number with its country code, digits only — e.g. 971501234567" });
+      }
+    }
+    live.start({ fresh: url.searchParams.get("resume") !== "1", phone: phone || undefined });
     return json(res, 200, live.snapshot());
   }
 
