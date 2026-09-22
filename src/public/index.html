@@ -121,6 +121,14 @@
   @keyframes lp{0%{box-shadow:0 0 0 0 rgba(31,138,83,.5)}70%{box-shadow:0 0 0 6px rgba(31,138,83,0)}100%{box-shadow:0 0 0 0 rgba(31,138,83,0)}}
 
   /* ---- tables ---- */
+  #bcText{width:100%;box-sizing:border-box;font:inherit;font-size:13.5px;line-height:1.5;padding:10px 12px;
+    border:1px solid var(--line);border-radius:8px;background:var(--panel);color:var(--ink);resize:vertical}
+  .bcbar{display:flex;gap:10px;align-items:center;margin-top:10px}
+  #bcList{max-height:460px;overflow:auto;border:1px solid var(--line2);border-radius:8px}
+  .bcrow{display:flex;gap:10px;align-items:center;padding:7px 10px;border-bottom:1px solid var(--line2);cursor:pointer;font-size:13px}
+  .bcrow:last-child{border-bottom:0}
+  .bcrow:hover{background:var(--line2)}
+  .bcrow .nm{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .cols2{display:grid;grid-template-columns:1fr 1fr;gap:14px;align-items:start}
   .scroll{overflow-x:auto}
   table{border-collapse:collapse;width:100%;font-size:12.5px}
@@ -185,6 +193,7 @@
     <button role="tab" id="tab-c3" aria-selected="false">C3 Cargo &amp; Tonnage</button>
     <button role="tab" id="tab-mx" aria-selected="false">Matches</button>
     <button role="tab" id="tab-wa" aria-selected="false">WhatsApp</button>
+    <button role="tab" id="tab-bc" aria-selected="false">Broadcast</button>
   </nav>
   <span class="grow"></span>
   <div class="ctl" id="ctl-c5">
@@ -303,6 +312,37 @@
     </div>
   </section>
 
+  <section id="v-bc" hidden>
+    <div class="bar"><h2>Broadcast</h2><span class="sub" id="bcMeta">loading…</span></div>
+    <div class="cols2">
+      <div class="card">
+        <h3>Message</h3>
+        <div style="padding:14px 16px">
+          <textarea id="bcText" rows="9" placeholder="Type the message to send to every tagged chat…"></textarea>
+          <div class="bcbar">
+            <button class="btn" id="bcSend" disabled>Send to tagged chats</button>
+            <span class="sub" id="bcCount"></span>
+          </div>
+          <p class="sub" style="margin:10px 0 0;line-height:1.55">
+            Sent one chat at a time, a few seconds apart. The same text fired at many chats at once is
+            what WhatsApp flags as spam, and this account is linked through an unofficial client.
+          </p>
+          <ol class="steps" id="bcProgress"></ol>
+        </div>
+      </div>
+      <div class="card">
+        <h3>Tagged chats <span class="pill" id="bcTagged">0</span></h3>
+        <div style="padding:14px 16px">
+          <div class="bcbar" style="margin:0 0 8px">
+            <input id="bcSearch" placeholder="Search chats…" autocomplete="off" style="flex:1">
+            <label class="sub" style="white-space:nowrap"><input type="checkbox" id="bcOnly"> tagged only</label>
+          </div>
+          <div id="bcList"></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
   <section id="v-mx" hidden>
     <div class="bar"><h2>Cargo → vessel matches</h2><span class="sub" id="metaM"></span></div>
     <div class="card" id="matches"></div>
@@ -346,7 +386,7 @@ function shortName(raw){
 function show(v){
   view=v;
   prefs.set("tab",v);
-  for (const [k,tab,sec] of [["c5","#tab-c5","#v-c5"],["c3","#tab-c3","#v-c3"],["mx","#tab-mx","#v-mx"],["wa","#tab-wa","#v-wa"]]){
+  for (const [k,tab,sec] of [["c5","#tab-c5","#v-c5"],["c3","#tab-c3","#v-c3"],["mx","#tab-mx","#v-mx"],["wa","#tab-wa","#v-wa"],["bc","#tab-bc","#v-bc"]]){
     $(tab).setAttribute("aria-selected", String(k===v));
     $(sec).hidden = k!==v;
   }
@@ -354,9 +394,91 @@ function show(v){
   $("#ctl-c3").hidden = v!=="c3" && v!=="mx";
   if ((v==="c3"||v==="mx") && !c3) loadC3();
   if (v==="wa") fetch("/api/wa/status").then(r=>r.json()).then(waRender).catch(()=>{});
+  if (v==="bc") loadBroadcast();
 }
 $("#tab-c5").onclick=()=>show("c5"); $("#tab-c3").onclick=()=>show("c3");
 $("#tab-mx").onclick=()=>show("mx"); $("#tab-wa").onclick=()=>show("wa");
+$("#tab-bc").onclick=()=>show("bc");
+
+// ---- Broadcast -------------------------------------------------------------
+// Chats are tagged by id and the list is saved on the server, so tags survive
+// a refresh and a redeploy. Chat names come from WhatsApp and are only ever
+// inserted as text.
+let bcChats=[], bcTags=new Map(), bcTimer=null, bcSaveTimer=null;
+async function loadBroadcast(){
+  try{
+    const d=await (await fetch("/api/broadcast/chats")).json();
+    bcChats=d.chats||[];
+    bcTags=new Map((d.tagged||[]).map(t=>[t.id,t]));
+    $("#bcMeta").textContent = d.connected
+      ? `${bcChats.length} chats · ${bcChats.filter(c=>c.isGroup).length} groups`
+      : "WhatsApp not connected — showing your saved tags only. Connect to tag more chats and send.";
+  }catch(e){ $("#bcMeta").textContent="Could not load chats: "+e.message; }
+  renderBcList(); bcRefresh(); pollBroadcast();
+}
+function renderBcList(){
+  const q=$("#bcSearch").value.trim().toLowerCase(), only=$("#bcOnly").checked;
+  const host=$("#bcList"); host.innerHTML="";
+  const rows=bcChats
+    .filter(c=>(!q||String(c.name).toLowerCase().includes(q))&&(!only||bcTags.has(c.id)))
+    .sort((a,b)=>(bcTags.has(b.id)-bcTags.has(a.id))||String(a.name).localeCompare(String(b.name)));
+  for(const c of rows.slice(0,500)){
+    const lab=el("label","bcrow"), cb=el("input");
+    cb.type="checkbox"; cb.checked=bcTags.has(c.id); cb.dataset.id=c.id;
+    cb.onchange=()=>{ if(cb.checked) bcTags.set(c.id,{id:c.id,name:c.name}); else bcTags.delete(c.id); saveBcTags(); bcRefresh(); };
+    lab.append(cb, el("span","nm",c.name), el("span","sub",c.isGroup?"group":"chat"));
+    host.appendChild(lab);
+  }
+  if(!rows.length) host.appendChild(el("div","empty", q?"No chat matches that search.":"No chats yet — connect WhatsApp first."));
+}
+function saveBcTags(){
+  clearTimeout(bcSaveTimer);
+  bcSaveTimer=setTimeout(()=>fetch("/api/broadcast/tags",{method:"POST",headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({tags:[...bcTags.values()]})}).catch(()=>toast("Could not save tags")),250);
+}
+let bcRunning=false;
+function bcRefresh(){
+  const n=bcTags.size;
+  $("#bcTagged").textContent=String(n);
+  $("#bcCount").textContent = n ? `${n} chat${n===1?"":"s"} tagged` : "tick chats on the right";
+  $("#bcSend").disabled = bcRunning || !n;
+}
+$("#bcSearch").oninput=renderBcList;
+$("#bcOnly").onchange=renderBcList;
+$("#bcSend").onclick=async()=>{
+  const text=$("#bcText").value.trim();
+  if(!text){ toast("Type a message first"); return; }
+  const n=bcTags.size; if(!n) return;
+  if(!confirm(`Send this message to ${n} chat${n===1?"":"s"}?\n\n${text.slice(0,300)}`)) return;
+  $("#bcSend").disabled=true;
+  const r=await fetch("/api/broadcast/send",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({text})});
+  const d=await r.json().catch(()=>({error:"bad response"}));
+  if(!r.ok||d.error){ toast("Not sent: "+(d.error||r.status)); bcRefresh(); return; }
+  pollBroadcast();
+};
+function renderBcProgress(st){
+  const host=$("#bcProgress"); host.innerHTML="";
+  if(!st||!st.results||!st.results.length) return;
+  const head=el("li",null, st.running
+    ? `Sending… ${st.done} of ${st.total}`
+    : `${st.dryRun?"Dry run: ":""}${st.sent} sent${st.failed?`, ${st.failed} failed`:""} · ${new Date(st.finishedAt||st.startedAt).toLocaleTimeString()}`);
+  host.appendChild(head);
+  for(const r of st.results){
+    const mark = r.state==="sent"?"✓":r.state==="failed"?"✗":r.state==="sending"?"…":"·";
+    const li=el("li",null,`${mark} ${r.name}${r.error?` — ${r.error}`:""}`);
+    if(r.state==="failed") li.style.color="var(--bad, #c0392b)";
+    host.appendChild(li);
+  }
+}
+async function pollBroadcast(){
+  clearTimeout(bcTimer);
+  try{
+    const st=await (await fetch("/api/broadcast/status")).json();
+    bcRunning=Boolean(st.running);
+    renderBcProgress(st); bcRefresh();
+    if(st.running) bcTimer=setTimeout(pollBroadcast,1000);
+  }catch{ bcTimer=setTimeout(pollBroadcast,3000); }
+}
 
 /* ---------------- live WhatsApp ---------------- */
 let waTimer=null;
@@ -1189,7 +1311,7 @@ $("#send").onclick=async(e)=>{
   await initDates();
   // Come back to the tab that was open, not always C5.
   const savedTab=prefs.get("tab","c5");
-  if(["c5","c3","mx","wa"].includes(savedTab)&&savedTab!=="c5") show(savedTab);
+  if(["c5","c3","mx","wa","bc"].includes(savedTab)&&savedTab!=="c5") show(savedTab);
   await loadC5();
   waPoll();
 

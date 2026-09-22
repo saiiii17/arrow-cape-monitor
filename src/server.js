@@ -292,6 +292,33 @@ const server = http.createServer(async (req, res) => {
     return json(res, 200, live.snapshot());
   }
 
+  // ---- broadcast -----------------------------------------------------------
+  if (url.pathname === "/api/broadcast/chats") {
+    const tagged = live.loadTags();
+    try {
+      return json(res, 200, { connected: true, chats: await live.listChats(), tagged });
+    } catch (e) {
+      // Not connected: show the saved tags so they can still be reviewed and
+      // untagged, and say why the full list is missing.
+      return json(res, 200, { connected: false, reason: e.message, chats: tagged, tagged });
+    }
+  }
+  if (url.pathname === "/api/broadcast/tags" && req.method === "POST") {
+    const { tags } = await readBody(req);
+    return json(res, 200, { tagged: live.saveTags(tags) });
+  }
+  if (url.pathname === "/api/broadcast/send" && req.method === "POST") {
+    const { text, dryRun } = await readBody(req);
+    try {
+      return json(res, 200, await live.broadcast(text, { dryRun: Boolean(dryRun) }));
+    } catch (e) {
+      return json(res, 400, { error: e.message });
+    }
+  }
+  if (url.pathname === "/api/broadcast/status") {
+    return json(res, 200, live.broadcastStatus());
+  }
+
   if (url.pathname === "/api/send" && req.method === "POST") {
     const { date, text, target } = await readBody(req);
     try {

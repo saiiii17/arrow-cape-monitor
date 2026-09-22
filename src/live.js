@@ -1253,6 +1253,129 @@ function logout({ unlink = true, wipe = false, clearData = false } = {}) {
   })().catch(() => {});
 }
 
+// ---------------------------------------------------------------------------
+// Broadcast: one message, sent to every chat the user has tagged.
+//
+// Tags are saved by chat id, not name: sending by name needs getChats(), which
+// is broken on current WhatsApp Web builds, and two chats can share a name.
+// Sends go one chat at a time with a few seconds between them. The same text
+// fired at many chats at once is exactly the pattern WhatsApp flags as spam,
+// and an unofficial client is the easiest kind to ban.
+// ---------------------------------------------------------------------------
+const BROADCAST_FILE = process.env.BROADCAST_FILE || path.join(__dirname, "..", "data", "broadcast-targets.json");
+const BROADCAST_MAX = Number(process.env.BROADCAST_MAX || 60);
+const BROADCAST_GAP_MS = Number(process.env.BROADCAST_GAP_MS || 2500);
+
+function loadTags() {
+  try {
+    const list = JSON.parse(fs.readFileSync(BROADCAST_FILE, "utf8"));
+    return Array.isArray(list) ? list.filter((t) => t && t.id) : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveTags(list) {
+  const clean = [];
+  const seen = new Set();
+  for (const t of Array.isArray(list) ? list : []) {
+    const id = String((t && t.id) || "").trim();
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    clean.push({ id, name: String(t.name || id).slice(0, 200), isGroup: id.endsWith("@g.us") });
+  }
+  fs.mkdirSync(path.dirname(BROADCAST_FILE), { recursive: true });
+  fs.writeFileSync(BROADCAST_FILE, JSON.stringify(clean, null, 2));
+  return clean;
+}
+
+// Every chat the user could tag: groups from the local database (reliable),
+// plus one-to-one chats from WhatsApp's in-memory chat list.
+async function listChats() {
+  if (state.status !== "ready" || !client) throw new Error("WhatsApp is not connected");
+  if (!state.groups.length) await refreshGroups().catch(() => {});
+  const out = new Map();
+  for (const g of state.groups) out.set(g.id, { id: g.id, name: g.name, isGroup: true });
+  try {
+    const direct = await client.pupPage.evaluate(() => {
+      const C = window.require("WAWebCollections");
+      if (!C || !C.Chat || typeof C.Chat.getModelsArray !== "function") return [];
+      return C.Chat.getModelsArray()
+        .map((c) => ({ c, id: String((c.id && c.id._serialized) || "") }))
+        .filter(({ id }) => id && !/@(g\.us|broadcast|newsletter)$/.test(id))
+        .map(({ c, id }) => ({
+          id,
+          name: c.formattedTitle || c.name || (c.contact && (c.contact.name || c.contact.pushname)) || id.split("@")[0],
+          isGroup: false,
+        }));
+    });
+    for (const d of direct) if (!out.has(d.id)) out.set(d.id, d);
+  } catch {
+    /* groups alone are still useful */
+  }
+  return [...out.values()].sort((a, b) => String(a.name).localeCompare(String(b.name)));
+}
+
+const bc = { running: false, results: [] };
+function broadcastStatus() {
+  return { ...bc, results: bc.results.map((r) => ({ ...r })) };
+}
+
+async function broadcast(text, { dryRun = false } = {}) {
+  const body = String(text || "").trim();
+  if (!body) throw new Error("Type a message first");
+  if (bc.running) throw new Error("A broadcast is already sending — wait for it to finish");
+  if (!dryRun && (state.status !== "ready" || !client)) throw new Error("WhatsApp is not connected — link it on the WhatsApp tab first");
+  const targets = loadTags();
+  if (!targets.length) throw new Error("No chats tagged — tick at least one chat");
+  if (targets.length > BROADCAST_MAX) {
+    throw new Error(`${targets.length} chats are tagged; the limit is ${BROADCAST_MAX} per broadcast to keep the account clear of WhatsApp's spam checks`);
+  }
+
+  Object.assign(bc, {
+    running: true, id: Date.now(), dryRun, text: body,
+    total: targets.length, done: 0, sent: 0, failed: 0,
+    startedAt: new Date().toISOString(), finishedAt: null,
+    results: targets.map((t) => ({ id: t.id, name: t.name, state: "waiting" })),
+  });
+  const gen = generation;
+  step(`Broadcast${dryRun ? " (dry run)" : ""}: sending to ${targets.length} chat${targets.length === 1 ? "" : "s"}…`);
+
+  (async () => {
+    for (let i = 0; i < targets.length; i++) {
+      const r = bc.results[i];
+      if (!dryRun && (!isCurrent(gen) || state.status !== "ready" || !client)) {
+        r.state = "failed"; r.error = "WhatsApp disconnected before this chat was reached";
+        bc.failed++; bc.done++;
+        continue;
+      }
+      r.state = "sending";
+      try {
+        if (!dryRun) await client.sendMessage(targets[i].id, body);
+        r.state = "sent"; r.at = new Date().toISOString();
+        bc.sent++;
+      } catch (e) {
+        r.state = "failed"; r.error = String((e && e.message) || e).slice(0, 160);
+        bc.failed++;
+      }
+      bc.done++;
+      if (i < targets.length - 1) {
+        const gap = dryRun ? 20 : BROADCAST_GAP_MS + Math.floor(Math.random() * BROADCAST_GAP_MS);
+        await new Promise((res) => setTimeout(res, gap));
+      }
+    }
+    bc.running = false;
+    bc.finishedAt = new Date().toISOString();
+    step(`Broadcast${dryRun ? " (dry run)" : ""} finished: ${bc.sent} sent${bc.failed ? `, ${bc.failed} failed` : ""}`, bc.failed ? "warn" : "ok");
+  })().catch((e) => {
+    bc.running = false;
+    bc.finishedAt = new Date().toISOString();
+    console.error("  [wa] broadcast crashed:", (e && e.message) || e);
+  });
+
+  return broadcastStatus();
+}
+
 // The same linked session sends the digest, so the owner scans one QR, not two.
 async function send(text, target) {
   if (state.status !== "ready" || !client) throw new Error("WhatsApp is not connected — link it on the WhatsApp tab first");
@@ -2100,4 +2223,4 @@ function environmentInfo() {
   };
 }
 
-module.exports = { pageState, clearStaleProfileLockAsync, wipeSessionAsync, start, snapshot, backfill, syncAll, prewarm, environmentInfo, probeModules, tryHydrate, diagnoseHistoryInternals, historySince, openChatByName, inspectAfterOpen, setWatching, logout, send, refreshGroups, importExport, clearStaleProfileLock, wipeSession };
+module.exports = { listChats, loadTags, saveTags, broadcast, broadcastStatus, pageState, clearStaleProfileLockAsync, wipeSessionAsync, start, snapshot, backfill, syncAll, prewarm, environmentInfo, probeModules, tryHydrate, diagnoseHistoryInternals, historySince, openChatByName, inspectAfterOpen, setWatching, logout, send, refreshGroups, importExport, clearStaleProfileLock, wipeSession };
