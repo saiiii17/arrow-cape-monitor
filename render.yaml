@@ -36,3 +36,10 @@ services:
       # this app can broadcast from the linked WhatsApp account.
       - key: APP_PASSWORD
         sync: false     # set in the Render dashboard
+      # The two groups the boxes start filled with. Names live here, not in the
+      # source, so a client's group names never reach the repository. Either can
+      # still be typed over in the app at any time.
+      - key: C5_GROUP
+        sync: false     # set in the Render dashboard
+      - key: C3_GROUP
+        sync: false     # set in the Render dashboard

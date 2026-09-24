@@ -125,6 +125,15 @@ const PULL_TIMEOUT_MS = Number(process.env.PULL_TIMEOUT_MS || 120_000);
 // app decided it was linked with nobody logged in, and served "saved WhatsApp
 // data" instead of the owner's exports after a reset. This flag is written when a
 // session actually authenticates and removed when it is torn down.
+// The usual two groups, so a fresh install does not start with empty boxes.
+// They come from the environment rather than the source: a group name is the
+// client's business and does not belong in a public repository. Read once at
+// startup, before the saved choice overwrites C5_GROUP/C3_GROUP.
+const DEFAULT_GROUPS = Object.freeze({
+  c5: String(process.env.C5_GROUP || "").trim(),
+  c3: String(process.env.C3_GROUP || "").trim(),
+});
+
 const LINKED_FLAG = process.env.LINKED_FLAG || path.join(__dirname, "..", "data", "linked.flag");
 function markLinked(on) {
   try {
@@ -1129,6 +1138,7 @@ function setWatching(c5, c3, since) {
 
 function snapshot() {
   return {
+    defaults: DEFAULT_GROUPS,
     status: state.status,
     phase: state.phase,
     steps: state.steps.slice(-14),

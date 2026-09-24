@@ -469,6 +469,10 @@
             Type the exact group names, or pick them once they appear. The list
             fills in as messages arrive in each group.
           </p>
+          <div class="bcbar" id="waDefaults" hidden style="margin:0 0 12px;flex-wrap:wrap">
+            <button class="btn" id="waUseDefaults">Use the usual groups</button>
+            <span class="sub" id="waDefaultsWhich"></span>
+          </div>
           <div class="ctl" style="margin-bottom:8px">
             <label class="k" for="waC5" style="width:64px">C5 group</label>
             <input id="waC5" style="flex:1;width:auto" placeholder="exact group name" list="waGroups">
@@ -1241,6 +1245,7 @@ function waRender(st){
     for(const g of st.groups){ const o=el("option"); o.value=g.name; dl.appendChild(o); }
     dl.dataset.n=String(st.groups.length);
   }
+  renderWaDefaults(st.defaults);
   if(st.watching.since && document.activeElement!==$("#waSince")) $("#waSince").value=st.watching.since;
   for(const [id,key] of [["#waC5","c5"],["#waC3","c3"]]){
     const inp=$(id);
@@ -1396,6 +1401,26 @@ async function importExportFile(which, input){
 }
 $("#waFileC5").onchange=(e)=>importExportFile("c5",e.target);
 $("#waFileC3").onchange=(e)=>importExportFile("c3",e.target);
+// The usual pair is offered whenever the boxes do not already hold it. The
+// names come from the server's environment, so nothing is baked into the page.
+function renderWaDefaults(defaults){
+  const d=defaults||{c5:"",c3:""};
+  const row=$("#waDefaults"); if(!row) return;
+  const have=Boolean(d.c5||d.c3);
+  const already=$("#waC5").value.trim()===(d.c5||"") && $("#waC3").value.trim()===(d.c3||"");
+  row.hidden=!have||already;
+  if(have&&!already){
+    $("#waDefaultsWhich").textContent=[d.c5&&`C5 ${d.c5}`,d.c3&&`C3 ${d.c3}`].filter(Boolean).join(" · ");
+  }
+}
+$("#waUseDefaults").onclick=async()=>{
+  const st=await (await fetch("/api/wa/status")).json().catch(()=>({}));
+  const d=(st&&st.defaults)||{};
+  if(d.c5) $("#waC5").value=d.c5;
+  if(d.c3) $("#waC3").value=d.c3;
+  $("#waDefaults").hidden=true;
+  toast("Filled in — press Save groups to use them");
+};
 $("#waSave").onclick=async()=>{
   const body={c5:$("#waC5").value.trim(),c3:$("#waC3").value.trim(),since:$("#waSince").value||""};
   if(!body.c5&&!body.c3) return toast("Type at least one group name");

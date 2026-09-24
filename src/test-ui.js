@@ -513,6 +513,53 @@ const press = (p, label) => p.evaluate((l) => {
     ok("the hint goes away when the token does", await p.$eval("#bcNameHint", (e) => e.hidden));
   }
 
+  console.log("\nthe usual groups are offered, not hardcoded");
+  {
+    await p.click("#tab-wa");
+    await new Promise(r => setTimeout(r, 800));
+    const shape = await p.evaluate(async () => {
+      const st = await (await fetch("/api/wa/status")).json();
+      return { has: Object.prototype.hasOwnProperty.call(st, "defaults"), d: st.defaults };
+    });
+    ok("the server reports what the boxes should start with", shape.has, JSON.stringify(shape));
+
+    // Set and read in one step: the 2.5s status poll re-renders this row, so
+    // anything split across two awaits races it.
+    const none = await p.evaluate(() => {
+      renderWaDefaults({ c5: "", c3: "" });
+      return document.querySelector("#waDefaults").hidden;
+    });
+    ok("nothing is offered when nothing is configured", none);
+
+    const offered = await p.evaluate(() => {
+      document.querySelector("#waC5").value = "";
+      document.querySelector("#waC3").value = "";
+      renderWaDefaults({ c5: "GROUP ONE", c3: "GROUP TWO" });
+      return {
+        shown: !document.querySelector("#waDefaults").hidden,
+        says: document.querySelector("#waDefaultsWhich").textContent,
+      };
+    });
+    ok("configured defaults are offered", offered.shown, JSON.stringify(offered));
+    ok("and it names them", offered.says.includes("GROUP ONE"), offered.says);
+
+    const settled = await p.evaluate(() => {
+      document.querySelector("#waC5").value = "GROUP ONE";
+      document.querySelector("#waC3").value = "GROUP TWO";
+      renderWaDefaults({ c5: "GROUP ONE", c3: "GROUP TWO" });
+      return document.querySelector("#waDefaults").hidden;
+    });
+    ok("the offer disappears once they are in place", settled);
+
+    // And they stay editable -- this is a starting point, not a lock.
+    await p.evaluate(() => { document.querySelector("#waC5").value = "SOMETHING ELSE"; });
+    ok("the field can still be typed over",
+       (await val(p, "#waC5")) === "SOMETHING ELSE");
+    await p.evaluate(() => { document.querySelector("#waC5").value = ""; document.querySelector("#waC3").value = ""; });
+    await p.click("#tab-bc");
+    await new Promise(r => setTimeout(r, 600));
+  }
+
   console.log("\nthe send button says what it will do");
   {
     await p.evaluate(() => {
