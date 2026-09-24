@@ -185,6 +185,36 @@ const waitDone = async () => { for (let i = 0; i < 200 && live.broadcastStatus()
     await waitDone();
   });
 
+  console.log("\nseveral attachments");
+
+  await test("every attachment is checked before a single chat is sent to", async () => {
+    const good = live.saveUpload(Buffer.from("a"), { name: "one.png", type: "image/png" });
+    await rejects(live.broadcast("see these", { dryRun: true, mediaIds: [good.mediaId, "not-a-real-id"] }),
+      /no longer available/);
+  });
+
+  await test("more attachments than the cap is refused", async () => {
+    const ids = [];
+    for (let i = 0; i < 11; i++) ids.push(live.saveUpload(Buffer.from("x"), { name: `p${i}.png`, type: "image/png" }).mediaId);
+    await rejects(live.broadcast("lots", { dryRun: true, mediaIds: ids }), /the limit is 10/);
+  });
+
+  await test("the order they were picked in is the order they go out", async () => {
+    const a = live.saveUpload(Buffer.from("a"), { name: "first.png", type: "image/png" });
+    const b = live.saveUpload(Buffer.from("b"), { name: "second.png", type: "image/png" });
+    const st = await live.broadcast("morning", { dryRun: true, mediaIds: [a.mediaId, b.mediaId] });
+    assert.deepStrictEqual(st.mediaIds, [a.mediaId, b.mediaId]);
+    assert.strictEqual(st.mediaId, a.mediaId, "the first is still reported on its own for older callers");
+    await waitDone();
+  });
+
+  await test("a single attachment still works the old way", async () => {
+    const one = live.saveUpload(Buffer.from("z"), { name: "solo.png", type: "image/png" });
+    const st = await live.broadcast("", { dryRun: true, mediaId: one.mediaId });
+    assert.deepStrictEqual(st.mediaIds, [one.mediaId]);
+    await waitDone();
+  });
+
   console.log("\nrecall");
 
   await test("recalling a dry run refuses — nothing real was ever sent", () =>

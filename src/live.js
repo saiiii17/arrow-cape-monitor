@@ -1617,49 +1617,244 @@ async function sendViaPage(id, { text = "", mediaPath = "" } = {}) {
     const m = MessageMedia.fromFilePath(mediaPath);
     media = { mimetype: m.mimetype, data: m.data, filename: m.filename };
   }
-  return client.pupPage.evaluate(async (chatId, body, attachment) => {
-    const C = window.require("WAWebCollections");
+  const out = await client.pupPage.evaluate(async (chatId, body, attachment) => {
+    // Every branch is recorded. Three wrong theories were chased because the
+    // code could not say what it actually did.
+    const trace = [];
     const ser = (v) => { try { return String((v && (v._serialized || v)) || ""); } catch { return ""; } };
+    const C = window.require("WAWebCollections");
 
     let chat = null;
-    try { chat = C.Chat.get(chatId) || null; } catch { /* keep looking */ }
+    try { chat = C.Chat.get(chatId) || null; } catch (e) { trace.push("Chat.get threw: " + e.message); }
+    if (chat) trace.push("chat found directly");
 
-    // Stored as a number, but WhatsApp files the conversation under a lid.
+    // WhatsApp files some conversations under a linked id rather than the
+    // number. Once found, the lid chat is what we send to -- converting back
+    // to the number only loses the chat again.
     if (!chat && /@c\.us$/.test(chatId)) {
       let M = null;
       try { M = window.require("WAWebLidMigrationUtils"); } catch { /* older build */ }
       for (const c of C.Chat.getModelsArray()) {
-        const own = ser(c.id);
-        if (!own.endsWith("@lid")) continue;
+        if (!ser(c.id).endsWith("@lid")) continue;
+        let pn = "";
+        if (M && typeof M.toPn === "function") { try { pn = ser(M.toPn(c.id)); } catch { /* next */ } }
+        if (!pn) { try { pn = ser(c.contact && c.contact.phoneNumber); } catch { /* next */ } }
+        if (!pn) { try { pn = ser(c.historyChatId); } catch { /* next */ } }
+        if (pn === chatId) { chat = c; trace.push("chat found under linked id " + ser(c.id)); break; }
+      }
+    }
+
+    if (!chat) {
+      try {
+        const wid = window.require("WAWebWidFactory").createWid(chatId);
+        const made = await window.require("WAWebFindChatAction").findOrCreateLatestChat(wid);
+        chat = (made && (made.chat || made)) || null;
+        trace.push("opened a new chat: " + Boolean(chat));
+      } catch (e) { return { ok: false, trace, error: "could not open a chat: " + e.message }; }
+    }
+    if (!chat) return { ok: false, trace, error: "no chat on this device for " + chatId };
+
+    // The newest outgoing message in the chat, for recall and delivery ticks:
+    // WhatsApp's own send actions report success, not a message id.
+    const lastOutgoing = () => {
+      try {
+        const msgs = (chat.msgs && chat.msgs.getModelsArray && chat.msgs.getModelsArray()) || [];
+        for (let i = msgs.length - 1; i >= 0; i--) {
+          const k = msgs[i] && msgs[i].id;
+          if (k && k.fromMe) return ser(k);
+        }
+      } catch { /* an id is a nicety; the message still went */ }
+      return "";
+    };
+
+    if (!attachment) {
+      // WhatsApp's own text sender. whatsapp-web.js builds the outgoing
+      // message itself and its version of that is what breaks on a
+      // lid-addressed chat, so the library is not asked to do it.
+      try {
+        const A = window.require("WAWebSendTextMsgChatAction");
+        trace.push("native text module: " + (A ? "loaded" : "missing") +
+          ", sendTextMsgToChat is " + (A ? typeof A.sendTextMsgToChat : "n/a"));
+        if (A && typeof A.sendTextMsgToChat === "function") {
+          const res = await A.sendTextMsgToChat(chat, body, {});
+          const shape = (() => { try { return JSON.stringify(res).slice(0, 200); } catch { return String(res); } })();
+          trace.push("native send returned " + shape);
+          if (res && res.messageSendResult && res.messageSendResult !== "OK") {
+            return { ok: false, trace, error: "WhatsApp refused the message: " + res.messageSendResult };
+          }
+          return { ok: true, trace, id: lastOutgoing(), via: "whatsapp" };
+        }
+      } catch (e) {
+        trace.push("native send threw: " + (e && e.message) + " | " + String((e && e.stack) || "").split("\n")[1]);
+      }
+    } else {
+      // Spreading WhatsApp's media model onto the message carries an internal
+      // __x_id across, and that is what the memoize getter chokes on. Only the
+      // plain fields are taken.
+      try {
+        const raw = await window.WWebJS.processMediaData(attachment, {
+          forceSticker: false, forceGif: false, forceVoice: false, forceDocument: false, forceMediaHd: false,
+        });
+        const fields = (raw && typeof raw.toJSON === "function") ? raw.toJSON() : { ...raw };
+        for (const k of ["__x_id", "parent", "collection", "mirror"]) delete fields[k];
+        fields.caption = body;
+
+        const U = window.require("WAWebUserPrefsMeUser");
+        const MsgKey = window.require("WAWebMsgKey");
+        const from = (typeof chat.id.isLid === "function" && chat.id.isLid())
+          ? U.getMaybeMeLidUser() : U.getMaybeMePnUser();
+        const key = new MsgKey({ from, to: chat.id, id: await MsgKey.newId(), participant: undefined, selfDir: "out" });
+        const eph = window.require("WAWebGetEphemeralFieldsMsgActionsUtils").getEphemeralFields(chat);
+        const message = {
+          id: key, ack: 0, body: fields.preview, from, to: chat.id, local: true, self: "out",
+          t: Math.floor(Date.now() / 1000), isNewMsg: true, type: "chat", ...eph, ...fields,
+        };
+        const sent = window.require("WAWebSendMsgChatAction").addAndSendMsgToChat(chat, message);
+        if (Array.isArray(sent)) { await sent[0]; await sent[1]; } else { await sent; }
+        trace.push("media sent through WhatsApp's own action");
+        return { ok: true, trace, id: ser(key), via: "whatsapp-media" };
+      } catch (e) {
+        trace.push("native media threw: " + (e && e.message));
+      }
+    }
+
+    // Last resort: the library's own path, which still works for chats
+    // WhatsApp has not moved to a linked id.
+    try {
+      const options = { linkPreview: true, parseVCards: true, mentionedJidList: [],
+        ignoreQuoteErrors: true, waitUntilMsgSent: false };
+      let content = body;
+      if (attachment) { options.media = attachment; options.caption = body; content = ""; }
+      const msg = await window.WWebJS.sendMessage(chat, content, options);
+      const model = msg ? window.WWebJS.getMessageModel(msg) : null;
+      trace.push("sent through the library");
+      return { ok: true, trace, id: (model && ser(model.id)) || lastOutgoing(), via: "library" };
+    } catch (e) {
+      return { ok: false, trace, error: "library send: " + (e && e.message) };
+    }
+  }, String(id), String(text || ""), media);
+
+  // The trace is for the log, never for the screen.
+  if (out && out.trace && out.trace.length) console.log("  [wa] send path:", out.trace.join(" -> "));
+  if (!out || !out.ok) throw new Error((out && out.error) || "the send reported nothing");
+  return out;
+}
+
+// Reports which branch the real send takes and why, stopping short of sending.
+async function dryRunSend(id) {
+  if (state.status !== "ready" || !client) throw new Error("WhatsApp is not connected");
+  return client.pupPage.evaluate((chatId) => {
+    const log = [];
+    const C = window.require("WAWebCollections");
+    const ser = (v) => { try { return String((v && (v._serialized || v)) || ""); } catch { return ""; } };
+    let chat = null;
+    try { chat = C.Chat.get(chatId) || null; } catch (e) { log.push("Chat.get threw: " + e.message); }
+    log.push("direct hit: " + (chat ? ser(chat.id) : "none"));
+    if (!chat && /@c\.us$/.test(chatId)) {
+      let M = null; try { M = window.require("WAWebLidMigrationUtils"); } catch { /* older */ }
+      for (const c of C.Chat.getModelsArray()) {
+        if (!ser(c.id).endsWith("@lid")) continue;
         let pn = "";
         if (M && typeof M.toPn === "function") { try { pn = ser(M.toPn(c.id)); } catch { /* next */ } }
         if (!pn) { try { pn = ser(c.contact && c.contact.phoneNumber); } catch { /* next */ } }
         if (!pn) { try { pn = ser(c.historyChatId); } catch { /* next */ } }
         if (pn === chatId) { chat = c; break; }
       }
+      log.push("after lid scan: " + (chat ? ser(chat.id) : "none"));
     }
+    if (!chat) return { log, verdict: "no chat found" };
 
-    // Never spoken to before: ask WhatsApp to open the conversation.
-    if (!chat) {
-      try {
-        const wid = window.require("WAWebWidFactory").createWid(chatId);
-        const made = await window.require("WAWebFindChatAction").findOrCreateLatestChat(wid);
-        chat = (made && (made.chat || made)) || null;
-      } catch (e) { throw new Error("could not open a chat for " + chatId + ": " + e.message); }
-    }
-    if (!chat) throw new Error("no chat on this device for " + chatId);
+    // Exactly the guard the real send uses.
+    let A = null, why = "";
+    try { A = window.require("WAWebSendTextMsgChatAction"); }
+    catch (e) { why = "require threw: " + e.message; }
+    log.push("module: " + (A ? "loaded, keys=" + Object.keys(A).join(",") : "null " + why));
+    log.push("typeof sendTextMsgToChat: " + (A ? typeof A.sendTextMsgToChat : "n/a"));
+    log.push("guard would pass: " + Boolean(A && typeof A.sendTextMsgToChat === "function"));
 
-    const options = {
-      linkPreview: true, parseVCards: true, mentionedJidList: [],
-      ignoreQuoteErrors: true, waitUntilMsgSent: false,
+    // Who the library thinks the message is from -- the getSender frame in the
+    // stack points here.
+    try {
+      const U = window.require("WAWebUserPrefsMeUser");
+      const isLid = typeof chat.id.isLid === "function" && chat.id.isLid();
+      const from = isLid ? U.getMaybeMeLidUser() : U.getMaybeMePnUser();
+      log.push("chat isLid=" + isLid + " from=" + ser(from));
+      const meC = C.Contact && C.Contact.get ? C.Contact.get(from) : null;
+      log.push("contact record for 'from': " + (meC ? "present" : "MISSING -- getSender has nothing to read"));
+      const toC = C.Contact && C.Contact.get ? C.Contact.get(chat.id) : null;
+      log.push("contact record for 'to': " + (toC ? "present" : "MISSING"));
+    } catch (e) { log.push("from/contact check threw: " + e.message); }
+    return { log, verdict: "reached the send" };
+  }, String(id));
+}
+
+// Walks the send path one step at a time and reports where it breaks, without
+// sending anything. Guessing cost two wrong fixes; this does not guess.
+async function traceSend(id) {
+  if (state.status !== "ready" || !client) throw new Error("WhatsApp is not connected");
+  return client.pupPage.evaluate((chatId) => {
+    const steps = [];
+    const note = (name, fn) => {
+      try { const v = fn(); steps.push({ step: name, ok: true, value: String(v).slice(0, 120) }); return v; }
+      catch (e) { steps.push({ step: name, ok: false, error: String((e && e.message) || e).slice(0, 160) }); return null; }
     };
-    let content = body;
-    if (attachment) { options.media = attachment; options.caption = body; content = ""; }
+    const ser = (v) => { try { return String((v && (v._serialized || v)) || ""); } catch { return ""; } };
+    const C = window.require("WAWebCollections");
 
-    const msg = await window.WWebJS.sendMessage(chat, content, options);
-    const model = msg ? window.WWebJS.getMessageModel(msg) : null;
-    return { id: (model && model.id && (model.id._serialized || String(model.id))) || "" };
-  }, String(id), String(text || ""), media);
+    note("Chat.get(string)", () => { const c = C.Chat.get(chatId); return c ? "found " + ser(c.id) : "not found (no throw)"; });
+    const wid = note("WidFactory.createWid(string)", () => ser(window.require("WAWebWidFactory").createWid(chatId)));
+    note("Chat.get(wid object)", () => {
+      const w = window.require("WAWebWidFactory").createWid(chatId);
+      const c = C.Chat.get(w);
+      return c ? "found " + ser(c.id) : "not found (no throw)";
+    });
+    note("scan models for a lid carrying this number", () => {
+      let M = null; try { M = window.require("WAWebLidMigrationUtils"); } catch { /* older */ }
+      let n = 0;
+      for (const c of C.Chat.getModelsArray()) {
+        if (!ser(c.id).endsWith("@lid")) continue;
+        n++;
+        let pn = "";
+        if (M && typeof M.toPn === "function") { try { pn = ser(M.toPn(c.id)); } catch { /* next */ } }
+        if (!pn) { try { pn = ser(c.contact && c.contact.phoneNumber); } catch { /* next */ } }
+        if (!pn) { try { pn = ser(c.historyChatId); } catch { /* next */ } }
+        if (pn === chatId) return "MATCH " + ser(c.id);
+      }
+      return "no match among " + n + " lid chats";
+    });
+    steps.push({ step: "WWebJS.sendMessage present", ok: Boolean(window.WWebJS && window.WWebJS.sendMessage) });
+    // The library picks the "from" user by whether the chat is lid-addressed.
+    // If this account has no lid user, from is undefined and the send dies
+    // inside WhatsApp with a getter error.
+    note("my lid user (used as 'from' for lid chats)", () => {
+      const U = window.require("WAWebUserPrefsMeUser");
+      const v = U.getMaybeMeLidUser && U.getMaybeMeLidUser();
+      return v ? ser(v) : "UNDEFINED -- this is the bug";
+    });
+    note("my phone user", () => {
+      const U = window.require("WAWebUserPrefsMeUser");
+      const v = U.getMaybeMePnUser && U.getMaybeMePnUser();
+      return v ? ser(v) : "undefined";
+    });
+    note("is the matched chat lid-addressed?", () => {
+      let M = null; try { M = window.require("WAWebLidMigrationUtils"); } catch { /* older */ }
+      for (const c of C.Chat.getModelsArray()) {
+        if (!ser(c.id).endsWith("@lid")) continue;
+        let pn = "";
+        if (M && typeof M.toPn === "function") { try { pn = ser(M.toPn(c.id)); } catch { /* next */ } }
+        if (!pn) { try { pn = ser(c.contact && c.contact.phoneNumber); } catch { /* next */ } }
+        if (pn !== chatId) continue;
+        return "isLid()=" + (typeof c.id.isLid === "function" ? c.id.isLid() : "no isLid fn");
+      }
+      return "no match";
+    });
+    note("WhatsApp's own text sender", () => {
+      const A = window.require("WAWebSendTextMsgChatAction");
+      return "sendTextMsgToChat arity " + (A.sendTextMsgToChat ? A.sendTextMsgToChat.length : "missing");
+    });
+    steps.push({ step: "total chats in collection", ok: true, value: String(C.Chat.getModelsArray().length) });
+    return { chatId, wid, steps };
+  }, String(id));
 }
 
 // Says whether a chat can be sent to, without sending anything to anyone.
@@ -1780,15 +1975,12 @@ async function listChats() {
     });
     // Store the number, not the linked id, so a chat ticked today can be sent
     // to. Two entries can resolve to the same number, hence the keyed Map.
-    const map = await resolvePhoneIds(direct.map((d) => d.id));
-    for (const d of direct) {
-      const id = map.get(d.id) || d.id;
-      if (!out.has(id)) out.set(id, { ...d, id });
-    }
-    // The saved lists are moved over at the same time. Without this a chat
-    // tagged under its old id shows as unticked -- the id on screen no longer
-    // matches the one on file -- and ticking it again quietly adds a duplicate.
-    migrateListIds(map);
+    // Ids are left exactly as WhatsApp keys them. An earlier version rewrote
+    // a linked id to the phone number, but a second chat often exists under
+    // the bare number -- named "+91 00000 00000" rather than "Meridian" -- and
+    // it won the de-duplication, so the contact's name vanished from the list.
+    // Sending resolves a linked id on its own, so nothing needs rewriting.
+    for (const d of direct) if (!out.has(d.id)) out.set(d.id, d);
   } catch {
     /* groups alone are still useful */
   }
@@ -1939,9 +2131,45 @@ async function refreshAcks({ force = false } = {}) {
 // Delete a broadcast for everyone. WhatsApp only allows this for a couple of
 // days after sending, and only message by message, so each chat is reported
 // separately -- some can fail while others succeed.
+// Deleting for everyone, the same way sending works: against WhatsApp's own
+// models. client.getMessageById() goes through the library's chat lookup,
+// which cannot address a linked id, so recall failed with a one-letter
+// minified error where a reason should have been.
+async function recallViaPage(messageId) {
+  return client.pupPage.evaluate(async (msgId) => {
+    const C = window.require("WAWebCollections");
+    let msg = null;
+    try { msg = C.Msg.get(msgId) || null; } catch { /* try the slower route */ }
+    if (!msg) {
+      try {
+        const got = await C.Msg.getMessagesById([msgId]);
+        msg = (got && got.messages && got.messages[0]) || null;
+      } catch { /* still nothing */ }
+    }
+    if (!msg) throw new Error("that message is no longer on this device");
+
+    let chat = null;
+    try { chat = C.Chat.get(msg.id.remote) || (await C.Chat.find(msg.id.remote)) || null; } catch { /* below */ }
+    if (!chat) throw new Error("the chat it was sent to could not be opened");
+
+    const cap = window.require("WAWebMsgActionCapability");
+    const allowed = cap.canSenderRevokeMsg(msg) || cap.canAdminRevokeMsg(msg);
+    if (!allowed) throw new Error("WhatsApp will not take this one back — it is older than about two days");
+
+    const { Cmd } = window.require("WAWebCmd");
+    try {
+      await Cmd.sendRevokeMsgs(chat, { list: [msg], type: "message" }, { clearMedia: true });
+    } catch (e) {
+      // Older WhatsApp builds take the list directly.
+      await Cmd.sendRevokeMsgs(chat, [msg], { clearMedia: true, type: msg.id.fromMe ? "Sender" : "Admin" });
+    }
+    return true;
+  }, String(messageId));
+}
+
 async function recallBroadcast({ dryRun = false } = {}) {
   restoreLastBroadcast();
-  const targets = bc.results.filter((r) => r.messageId && r.state === "sent" && !r.recalled);
+  const targets = bc.results.filter((r) => (r.messageId || (r.messageIds || []).length) && r.state === "sent" && !r.recalled);
   if (!bc.results.length) throw new Error("Nothing has been broadcast yet");
   if (!targets.length) throw new Error("Nothing left to recall — those messages were already deleted");
   if (!dryRun && (state.status !== "ready" || !client)) throw new Error("WhatsApp is not connected — link it on the WhatsApp tab first");
@@ -1951,13 +2179,16 @@ async function recallBroadcast({ dryRun = false } = {}) {
   for (const r of targets) {
     try {
       if (!dryRun) {
-        const msg = await client.getMessageById(r.messageId);
-        if (!msg) throw new Error("message not found on this device");
-        await msg.delete(true); // true = delete for everyone
+        const all = (r.messageIds && r.messageIds.length) ? r.messageIds : [r.messageId];
+        for (const mid of all) if (mid) await recallViaPage(mid);
       }
       r.recalled = true; r.state = "recalled"; done++;
     } catch (e) {
-      r.recallError = String((e && e.message) || e).slice(0, 140);
+      const raw = String((e && e.message) || e);
+      // A bare minified name is not a reason anyone can act on.
+      r.recallError = raw.length > 2 ? raw.slice(0, 140)
+        : "WhatsApp refused to delete it — it may be older than about two days";
+      console.error("  [wa] recall failed:", raw);
       failed++;
     }
   }
@@ -1970,11 +2201,22 @@ async function recallBroadcast({ dryRun = false } = {}) {
   return broadcastStatus();
 }
 
-async function broadcast(text, { dryRun = false, origin = "app", listId = "", mediaId = "" } = {}) {
+const ATTACH_MAX = Number(process.env.BROADCAST_ATTACH_MAX || 10);
+
+async function broadcast(text, { dryRun = false, origin = "app", listId = "", mediaId = "", mediaIds = [] } = {}) {
   const body = String(text || "").trim();
-  // With an attachment the text becomes its caption, so an empty message is fine.
-  if (!body && !mediaId) throw new Error("Type a message first");
-  const media = mediaId ? uploadPath(mediaId) : "";
+  // One attachment or several: the single id is still accepted so nothing that
+  // already calls this has to change.
+  const ids = (Array.isArray(mediaIds) && mediaIds.length ? mediaIds : (mediaId ? [mediaId] : []))
+    .map((x) => String(x || "").trim()).filter(Boolean);
+  if (!body && !ids.length) throw new Error("Type a message first");
+  if (ids.length > ATTACH_MAX) {
+    throw new Error(`${ids.length} attachments — the limit is ${ATTACH_MAX} per broadcast, or WhatsApp starts treating it as spam`);
+  }
+  // Checked before anything is sent: a missing file halfway through would
+  // leave some chats with the message and some without.
+  const mediaPaths = ids.map((x) => uploadPath(x));
+  const media = mediaPaths[0] || "";
   if (bc.running) throw new Error("A broadcast is already sending — wait for it to finish");
   if (!dryRun && (state.status !== "ready" || !client)) throw new Error("WhatsApp is not connected — link it on the WhatsApp tab first");
   // The broadcast group itself is never a target: sending into it would be
@@ -1989,34 +2231,12 @@ async function broadcast(text, { dryRun = false, origin = "app", listId = "", me
 
   Object.assign(bc, {
     running: true, id: Date.now(), dryRun, origin, text: body,
-    mediaId: mediaId || "", listId: (list && list.id) || "", listName: (list && list.name) || "",
+    mediaId: ids[0] || "", mediaIds: ids, listId: (list && list.id) || "", listName: (list && list.name) || "",
     personalised: hasTokens(body),
     total: targets.length, done: 0, sent: 0, failed: 0,
     startedAt: new Date().toISOString(), finishedAt: null,
     results: targets.map((t) => ({ id: t.id, name: t.name, state: "waiting" })),
   });
-  // A chat tagged before WhatsApp moved it to a linked id is stored under an
-  // id that cannot be sent to. Translate the whole set once, and write the
-  // numbers back to the list so it is right from here on rather than every
-  // send having to discover it again.
-  if (!dryRun) {
-    const map = await resolvePhoneIds(targets.map((t) => t.id));
-    let healed = 0;
-    for (const t of targets) {
-      const pn = map.get(t.id);
-      if (pn && pn !== t.id) { t.sendId = pn; healed++; }
-    }
-    if (healed && list) {
-      const lists = loadLists();
-      const mine = lists.find((l) => l.id === list.id);
-      if (mine) {
-        for (const c of mine.chats) { const pn = map.get(c.id); if (pn) c.id = pn; }
-        try { saveLists(lists); } catch { /* sending matters more than tidying */ }
-      }
-      step(`Updated ${healed} chat${healed === 1 ? "" : "s"} WhatsApp had moved to a new address`);
-    }
-  }
-
   const gen = generation;
   step(`Broadcast${dryRun ? " (dry run)" : ""}: sending to ${targets.length} chat${targets.length === 1 ? "" : "s"}…`);
 
@@ -2036,22 +2256,24 @@ async function broadcast(text, { dryRun = false, origin = "app", listId = "", me
         r.text = mine;
         if (!dryRun) {
           const to = targets[i].sendId || targets[i].id;
-          let messageId = "";
-          try {
+          // sendViaPage already falls back to the library internally, so a
+          // throw here means every route was tried and none worked.
+          const ids2 = [];
+          if (mediaPaths.length > 1) {
+            // WhatsApp sends each picture as its own message. The text rides on
+            // the first, the way it does when you attach several in the app.
+            for (let k = 0; k < mediaPaths.length; k++) {
+              const out = await sendViaPage(to, { text: k === 0 ? mine : "", mediaPath: mediaPaths[k] });
+              if (out && out.id) ids2.push(out.id);
+              if (k < mediaPaths.length - 1) await new Promise((res) => setTimeout(res, 700));
+            }
+          } else {
             const out = await sendViaPage(to, { text: mine, mediaPath: media });
-            messageId = (out && out.id) || "";
-          } catch (e) {
-            // The library still works for chats WhatsApp has not moved, so it
-            // is worth one try before giving up on this chat.
-            console.error("  [wa] direct send failed, falling back:", String((e && e.message) || e));
-            const sent = media
-              ? await client.sendMessage(to, MessageMedia.fromFilePath(media), mine ? { caption: mine } : {})
-              : await client.sendMessage(to, mine);
-            rememberSent(sent);
-            messageId = (sent && sent.id && (sent.id._serialized || String(sent.id))) || "";
+            if (out && out.id) ids2.push(out.id);
           }
-          // Kept so the message can be recalled and its delivery followed.
-          r.messageId = messageId;
+          // Kept so the messages can be recalled and delivery followed.
+          r.messageIds = ids2;
+          r.messageId = ids2[0] || "";
         }
         r.state = "sent"; r.at = new Date().toISOString();
         bc.sent++;
@@ -2934,6 +3156,8 @@ function environmentInfo() {
 }
 
 module.exports = {
+  dryRunSend,
+  traceSend,
   shutdown,
   personalise, friendlyNameOf, hasTokens,
   checkSendable,

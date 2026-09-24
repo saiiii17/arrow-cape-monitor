@@ -366,6 +366,40 @@ const press = (p, label) => p.evaluate((l) => {
     ok("an image uploads and comes back as an image", up.isImage === true && /\.png$/.test(up.mediaId || ""),
        JSON.stringify(up));
 
+    // Several pictures at once, each removable on its own.
+    ok("the file picker accepts more than one", await p.$eval("#bcFile", (e) => e.multiple));
+    await p.evaluate(() => {
+      bcMediaList = [
+        { mediaId: "a.png", name: "chart-one.png", size: 2048, isImage: true },
+        { mediaId: "b.png", name: "chart-two.png", size: 4096, isImage: true },
+        { mediaId: "c.pdf", name: "fixture.pdf", size: 8192, isImage: false },
+      ];
+      renderChips(); bcRefresh();
+    });
+    await new Promise(r => setTimeout(r, 200));
+    ok("each attachment gets its own chip", await p.$$eval("#bcFileChip .chip", (c) => c.length) === 3);
+    ok("it says how many will go", (await p.$eval("#bcFileChip", (e) => e.textContent)).includes("3 attachments"));
+
+    await p.evaluate(() => document.querySelectorAll("#bcFileChip .chip button")[1].click());
+    await new Promise(r => setTimeout(r, 200));
+    const left = await p.evaluate(() => bcMediaList.map(m => m.name));
+    ok("removing one chip removes only that one",
+       JSON.stringify(left) === JSON.stringify(["chart-one.png", "fixture.pdf"]), JSON.stringify(left));
+
+    // Attachments alone are enough to send -- no text needed -- provided there
+    // is somewhere to send them, so a chat is ticked for this check.
+    await p.$eval("#bcText", (e) => { e.value = ""; e.dispatchEvent(new Event("input")); });
+    await p.evaluate(() => { bcTags.set("t@c.us", { id: "t@c.us", name: "Tester" }); bcRefresh(); });
+    await new Promise(r => setTimeout(r, 150));
+    ok("attachments alone enable Send", await p.$eval("#bcSend", (e) => !e.disabled));
+
+    await p.evaluate(() => { bcMediaList = []; renderChips(); bcRefresh(); });
+    await new Promise(r => setTimeout(r, 150));
+    ok("with nothing attached and no text, Send is off again",
+       await p.$eval("#bcSend", (e) => e.disabled));
+    await p.evaluate(() => { bcTags.delete("t@c.us"); bcRefresh(); });
+    ok("the chip row hides when empty", await p.$eval("#bcFileChip", (e) => e.hidden));
+
     // Put it back the way it was found.
     await p.evaluate(async () => {
       const d = await (await fetch("/api/broadcast/lists")).json();
@@ -375,6 +409,48 @@ const press = (p, label) => p.evaluate((l) => {
     });
     ok("the test list is cleaned up",
        await p.$$eval("#bcListSel option", (o) => o.every((x) => x.value !== "uitest")));
+  }
+
+  console.log("\nswitching lists must never empty the one you leave");
+  {
+    // A save queued against the old list used to land on the new one, so
+    // switching to an empty list wiped the chats you had just ticked.
+    await p.evaluate(async () => {
+      await fetch("/api/broadcast/lists", { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ lists: [
+          { id: "main", name: "Main list", chats: [{ id: "keep1@c.us", name: "Keep One" }, { id: "keep2@c.us", name: "Keep Two" }] },
+          { id: "empty", name: "Empty list", chats: [] },
+        ] }) });
+      await loadBroadcast();
+    });
+    await new Promise(r => setTimeout(r, 600));
+
+    // Switch away and straight back, the way a person would.
+    await p.evaluate(() => switchList("empty"));
+    await new Promise(r => setTimeout(r, 500));
+    await p.evaluate(() => switchList("main"));
+    await new Promise(r => setTimeout(r, 700));
+
+    const after = await p.evaluate(async () => (await (await fetch("/api/broadcast/lists")).json()).lists);
+    const main = after.find(l => l.id === "main");
+    ok("the chats survive a round trip through another list", main && main.chats.length === 2,
+       JSON.stringify(main && main.chats));
+
+    // The nastier case: a tick is still queued when the list changes.
+    await p.evaluate(() => {
+      switchList("main");
+      bcTags.delete("keep2@c.us");
+      saveBcTags();          // queued against main
+      switchList("empty");   // must flush to main, not write [] over it
+    });
+    await new Promise(r => setTimeout(r, 900));
+    const after2 = await p.evaluate(async () => (await (await fetch("/api/broadcast/lists")).json()).lists);
+    const main2 = after2.find(l => l.id === "main");
+    const empty2 = after2.find(l => l.id === "empty");
+    ok("a queued change lands on the list it was made in", main2 && main2.chats.length === 1,
+       JSON.stringify(main2 && main2.chats));
+    ok("and never on the list switched to", empty2 && empty2.chats.length === 0,
+       JSON.stringify(empty2 && empty2.chats));
   }
 
   console.log("\ngreeting each chat by name");

@@ -260,6 +260,8 @@ const server = http.createServer(async (req, res) => {
       }
       // Opening the chat makes WhatsApp load and DECRYPT its messages into
       // Collections.Msg; without it only encrypted raw rows are available.
+      if (url.searchParams.get("dry")) return json(res, 200, await live.dryRunSend(url.searchParams.get("dry")));
+      if (url.searchParams.get("trace")) return json(res, 200, await live.traceSend(url.searchParams.get("trace")));
       if (url.searchParams.get("sendable")) return json(res, 200, await live.checkSendable(url.searchParams.get("sendable")));
       if (url.searchParams.get("lid")) return json(res, 200, await live.probeLid(url.searchParams.get("lid")));
       if (url.searchParams.get("probe") === "1") return json(res, 200, await live.probeModules());
@@ -402,9 +404,10 @@ const server = http.createServer(async (req, res) => {
     }
   }
   if (url.pathname === "/api/broadcast/send" && req.method === "POST") {
-    const { text, dryRun, listId, mediaId } = await readBody(req);
+    const { text, dryRun, listId, mediaId, mediaIds } = await readBody(req);
     try {
-      return json(res, 200, await live.broadcast(text, { dryRun: Boolean(dryRun), listId: listId || "", mediaId: mediaId || "" }));
+      return json(res, 200, await live.broadcast(text, { dryRun: Boolean(dryRun), listId: listId || "",
+        mediaId: mediaId || "", mediaIds: Array.isArray(mediaIds) ? mediaIds : [] }));
     } catch (e) {
       return json(res, 400, { error: e.message });
     }
