@@ -377,6 +377,44 @@ const press = (p, label) => p.evaluate((l) => {
        await p.$$eval("#bcListSel option", (o) => o.every((x) => x.value !== "uitest")));
   }
 
+  console.log("\ngreeting each chat by name");
+  {
+    await p.$eval("#bcText", (e) => { e.value = ""; e.dispatchEvent(new Event("input")); });
+    await p.click("#bcText");
+    await p.type("#bcText", "Good morning");
+    await p.click("#bcName");
+    await new Promise(r => setTimeout(r, 250));
+    const v = await val(p, "#bcText");
+    ok("the name button inserts a token with a space before it", v === "Good morning {name}", JSON.stringify(v));
+    ok("it says the name will be filled in per chat",
+       await p.$eval("#bcNameHint", (e) => !e.hidden));
+
+    // Inserting mid-sentence must land at the cursor, not at the end.
+    await p.$eval("#bcText", (e) => { e.value = "Hi , C5 is firm"; e.setSelectionRange(3, 3); e.dispatchEvent(new Event("input")); });
+    await p.click("#bcName");
+    await new Promise(r => setTimeout(r, 200));
+    ok("it inserts at the cursor", (await val(p, "#bcText")) === "Hi {name}, C5 is firm", await val(p, "#bcText"));
+
+    // The server renders the preview, so this proves the whole path.
+    const pv = await p.evaluate(async () => {
+      const r = await fetch("/api/broadcast/preview", { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: "Good morning {name}", listId: "" }) });
+      return r.json();
+    });
+    ok("the preview knows the message is personalised", pv.personalised === true);
+
+    const plain = await p.evaluate(async () => {
+      const r = await fetch("/api/broadcast/preview", { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: "C5 firm at 24.50", listId: "" }) });
+      return r.json();
+    });
+    ok("a message with no token is not treated as personalised", plain.personalised === false);
+
+    await p.$eval("#bcText", (e) => { e.value = ""; e.dispatchEvent(new Event("input")); });
+    await new Promise(r => setTimeout(r, 150));
+    ok("the hint goes away when the token does", await p.$eval("#bcNameHint", (e) => e.hidden));
+  }
+
   console.log("\nthe app asks its own questions, not the browser's");
   {
     let native = false;

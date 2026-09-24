@@ -260,6 +260,7 @@ const server = http.createServer(async (req, res) => {
       }
       // Opening the chat makes WhatsApp load and DECRYPT its messages into
       // Collections.Msg; without it only encrypted raw rows are available.
+      if (url.searchParams.get("sendable")) return json(res, 200, await live.checkSendable(url.searchParams.get("sendable")));
       if (url.searchParams.get("lid")) return json(res, 200, await live.probeLid(url.searchParams.get("lid")));
       if (url.searchParams.get("probe") === "1") return json(res, 200, await live.probeModules());
       if (url.searchParams.get("hydrate") === "1") return json(res, 200, await live.tryHydrate(hit.id));
@@ -351,6 +352,17 @@ const server = http.createServer(async (req, res) => {
       // untagged, and say why the full list is missing.
       return json(res, 200, { connected: false, reason: e.message, chats: tagged, tagged });
     }
+  }
+  // Shows the operator exactly how a greeting lands before it is sent.
+  if (url.pathname === "/api/broadcast/preview" && req.method === "POST") {
+    const { text, listId } = await readBody(req);
+    const list = live.getList(listId || "");
+    const chats = (list && list.chats) || [];
+    return json(res, 200, {
+      personalised: live.hasTokens(text),
+      samples: chats.slice(0, 3).map((c) => ({ name: c.name, text: live.personalise(text, c) })),
+      more: Math.max(0, chats.length - 3),
+    });
   }
   if (url.pathname === "/api/broadcast/lists") {
     if (req.method === "POST") {

@@ -1410,6 +1410,86 @@ function saveLists(lists) {
   return writeLists(clean);
 }
 
+// Rewrites saved chat ids that WhatsApp has moved, dropping any duplicate the
+// drift has already produced. Keeps the first of each, so a name stays put.
+function migrateListIds(map) {
+  if (!map || !map.size) return;
+  let touched = 0;
+  const lists = loadLists();
+  for (const l of lists) {
+    const seen = new Set();
+    const kept = [];
+    for (const c of l.chats) {
+      const id = map.get(c.id) || c.id;
+      if (id !== c.id) touched++;
+      if (seen.has(id)) { touched++; continue; }
+      seen.add(id);
+      kept.push({ ...c, id });
+    }
+    l.chats = kept;
+  }
+  if (touched) {
+    try { saveLists(lists); console.log(`  [wa] moved ${touched} saved chat id(s) to WhatsApp's new addressing`); }
+    catch { /* the list still works in memory */ }
+  }
+}
+
+// ---- Personal greetings -----------------------------------------------------
+// "Good morning {name}" goes out as "Good morning Meridian" to one chat and
+// "Good morning Dalton" to the next. The name is already known -- it is the one
+// on screen -- so this is a substitution, not a judgement, and nothing is asked
+// of a model: a broker greeted by the wrong name is worse than no name at all.
+
+// WhatsApp contacts are saved as "Meridian Shipping Pte Ltd" or "Dalton —
+// Oldendorff" far more often than as a bare first name.
+const COMPANY_WORDS = /\b(pte|pvt|ltd|limited|llc|l\.l\.c|inc|co|corp|corporation|company|shipping|chartering|charterers|maritime|marine|logistics|fze|fzc|fzco|dmcc|gmbh|bv|nv|srl|sa|group|trading|lines|line|tankers|bulk|carriers|carrier|agency|agencies|brokers|broking)\b/gi;
+const SPLIT_AT = /\s+[-–—|/\\]\s+|[(,]/;
+
+function friendlyNameOf(target) {
+  const raw = String((target && target.name) || "").trim();
+  if (!raw) return "";
+  // A chat that never got a name shows its number. Greeting a number is worse
+  // than greeting nobody.
+  if (/^\+?[\d\s()-]+$/.test(raw)) return "";
+  // A group is greeted by its own name -- "Good morning C5 Owners" reads right,
+  // one member's first name would not.
+  if (target && target.isGroup) return raw.replace(/\s+/g, " ").trim();
+
+  let n = raw.split(SPLIT_AT)[0];
+  n = n.replace(COMPANY_WORDS, " ").replace(/[^\p{L}\p{M}'.\- ]/gu, " ").replace(/\s+/g, " ").trim();
+  const first = n.split(" ").filter(Boolean)[0] || "";
+  if (first.length < 2) return "";
+  // SHOUTED contact names are common; softened so the greeting is not shouted.
+  const cased = first === first.toUpperCase() && first.length > 3
+    ? first[0] + first.slice(1).toLowerCase()
+    : first[0].toUpperCase() + first.slice(1);
+  return cased;
+}
+
+// Tokens are deliberately few: one for the greeting, one escape hatch for the
+// name exactly as it is saved.
+const NAME_TOKEN = /\{\s*(name|first_?name)\s*\}/gi;
+const FULL_TOKEN = /\{\s*full_?name\s*\}/gi;
+function hasTokens(text) { NAME_TOKEN.lastIndex = 0; FULL_TOKEN.lastIndex = 0; return NAME_TOKEN.test(String(text || "")) || FULL_TOKEN.test(String(text || "")); }
+
+function personalise(text, target) {
+  const body = String(text || "");
+  if (!hasTokens(body)) return body;
+  const friendly = friendlyNameOf(target);
+  const full = String((target && target.name) || "").trim();
+  const out = body
+    .replace(FULL_TOKEN, () => (/^\+?[\d\s()-]+$/.test(full) ? "" : full))
+    .replace(NAME_TOKEN, () => friendly);
+  // With no name to insert, "Good morning {name}" must read "Good morning",
+  // not "Good morning" with a dangling space and comma.
+  return out
+    .replace(/[ \t]{2,}/g, " ")
+    .replace(/[ \t]+([,.!?;:])/g, "$1")
+    .replace(/^([ \t]*[,;:]\s*)/gm, "")
+    .replace(/[ \t]+$/gm, "")
+    .trim();
+}
+
 function getList(listId) {
   const lists = loadLists();
   return lists.find((l) => l.id === listId) || lists[0];
@@ -1501,10 +1581,43 @@ async function resolvePhoneIds(ids) {
 // WhatsApp's internals leak wording no broker should ever read.
 function sendErrorText(e) {
   const raw = String((e && e.message) || e);
-  if (/must include an id property/i.test(raw) || /getter/i.test(raw)) {
+  // Logged whole: the screen gets a sentence, the operator keeps the evidence.
+  console.error("  [wa] send failed:", raw);
+  if (/must include an id property/i.test(raw)) {
     return "WhatsApp could not address this chat — open it once on your phone, then untick and tick it again here";
   }
   return raw.slice(0, 160);
+}
+
+// Says whether a chat can be sent to, without sending anything to anyone.
+async function checkSendable(id) {
+  if (state.status !== "ready" || !client) throw new Error("WhatsApp is not connected");
+  const raw = String(id || "");
+  const resolved = (await resolvePhoneIds([raw])).get(raw) || raw;
+  const out = { asked: raw, resolved };
+  try { const c = await client.getChatById(resolved); out.getChatById = c ? `ok — ${c.name || c.id._serialized}` : "returned nothing"; }
+  catch (e) { out.getChatById = "FAILED: " + String((e && e.message) || e).slice(0, 200); }
+  try {
+    out.pageSide = await client.pupPage.evaluate((wid, lid) => {
+      const r = {};
+      try {
+        const W = window.require("WAWebWidFactory");
+        r.widFactory = W && typeof W.createWid === "function" ? String(W.createWid(wid)) : "no createWid";
+      } catch (e) { r.widFactory = "missing: " + e.message; }
+      try {
+        const C = window.require("WAWebCollections");
+        r.chatUnderNumber = C.Chat && C.Chat.get && C.Chat.get(wid) ? "yes" : "no";
+        r.chatUnderLid = lid && C.Chat && C.Chat.get && C.Chat.get(lid) ? "yes" : "no";
+      } catch (e) { r.chatUnderNumber = "err: " + e.message; }
+      r.wwebjs = window.WWebJS ? Object.keys(window.WWebJS).slice(0, 40) : "no WWebJS";
+      for (const m of ["WAWebSendMsgChatAction", "WAWebChatSendMessages", "WAWebSendTextMsgChatAction", "WAWebFindChatAction"]) {
+        try { const mod = window.require(m); r[m] = mod ? Object.keys(mod).slice(0, 12) : "empty"; }
+        catch { r[m] = "missing"; }
+      }
+      return r;
+    }, resolved, raw.endsWith("@lid") ? raw : "");
+  } catch (e) { out.pageSide = "err: " + String((e && e.message) || e).slice(0, 160); }
+  return out;
 }
 
 // Reports how this build of WhatsApp Web stores a linked id, so the mapping to
@@ -1577,6 +1690,10 @@ async function listChats() {
       const id = map.get(d.id) || d.id;
       if (!out.has(id)) out.set(id, { ...d, id });
     }
+    // The saved lists are moved over at the same time. Without this a chat
+    // tagged under its old id shows as unticked -- the id on screen no longer
+    // matches the one on file -- and ticking it again quietly adds a duplicate.
+    migrateListIds(map);
   } catch {
     /* groups alone are still useful */
   }
@@ -1778,6 +1895,7 @@ async function broadcast(text, { dryRun = false, origin = "app", listId = "", me
   Object.assign(bc, {
     running: true, id: Date.now(), dryRun, origin, text: body,
     mediaId: mediaId || "", listId: (list && list.id) || "", listName: (list && list.name) || "",
+    personalised: hasTokens(body),
     total: targets.length, done: 0, sent: 0, failed: 0,
     startedAt: new Date().toISOString(), finishedAt: null,
     results: targets.map((t) => ({ id: t.id, name: t.name, state: "waiting" })),
@@ -1817,11 +1935,15 @@ async function broadcast(text, { dryRun = false, origin = "app", listId = "", me
       }
       r.state = "sending";
       try {
+        // Each chat gets its own greeting; with no tokens this is the same
+        // text for everyone, exactly as before.
+        const mine = personalise(body, targets[i]);
+        r.text = mine;
         if (!dryRun) {
           const to = targets[i].sendId || targets[i].id;
           const sent = media
-            ? await client.sendMessage(to, MessageMedia.fromFilePath(media), body ? { caption: body } : {})
-            : await client.sendMessage(to, body);
+            ? await client.sendMessage(to, MessageMedia.fromFilePath(media), mine ? { caption: mine } : {})
+            : await client.sendMessage(to, mine);
           rememberSent(sent);
           // Kept so the message can be recalled and its delivery followed.
           r.messageId = (sent && sent.id && (sent.id._serialized || String(sent.id))) || "";
@@ -2707,5 +2829,7 @@ function environmentInfo() {
 }
 
 module.exports = {
+  personalise, friendlyNameOf, hasTokens,
+  checkSendable,
   sendErrorText,
   probeLid, saveUpload, recallBroadcast, refreshAcks, loadLists, saveLists, getList, profileOwner, releaseProfileLock, loadRelay, saveRelay, maybeRelay, listChats, loadTags, saveTags, broadcast, broadcastStatus, pageState, clearStaleProfileLockAsync, wipeSessionAsync, start, snapshot, backfill, syncAll, prewarm, environmentInfo, probeModules, tryHydrate, diagnoseHistoryInternals, historySince, openChatByName, inspectAfterOpen, setWatching, logout, send, refreshGroups, importExport, clearStaleProfileLock, wipeSession };

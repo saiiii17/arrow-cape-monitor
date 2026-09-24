@@ -220,6 +220,78 @@ const waitDone = async () => { for (let i = 0; i < 200 && live.broadcastStatus()
     assert.doesNotMatch(fs.readFileSync(lastFile, "utf8"), /recalled/, "a dry run does not touch the saved record");
   });
 
+  console.log("\ngreeting each chat by name");
+
+  const who = (name, isGroup) => ({ id: "x@c.us", name, isGroup: Boolean(isGroup) });
+  const greet = (name, isGroup) => live.personalise("Good morning {name}", who(name, isGroup));
+
+  await test("a plain first name is used as it is", () =>
+    assert.strictEqual(greet("the owner"), "Good morning the owner"));
+
+  await test("the company falls away", () => {
+    assert.strictEqual(greet("Meridian Shipping Pte Ltd"), "Good morning Meridian");
+    assert.strictEqual(greet("Dalton — Northwind"), "Good morning Dalton");
+    assert.strictEqual(greet("Ali (Charterers)"), "Good morning Ali");
+    assert.strictEqual(greet("Meera | Fednav"), "Good morning Meera");
+  });
+
+  await test("a SHOUTED contact is not shouted back at", () =>
+    assert.strictEqual(greet("HARGREAVES"), "Good morning Hargreaves"));
+
+  await test("a group is greeted by its own name, not one member's", () =>
+    assert.strictEqual(greet("C5 Owners", true), "Good morning C5 Owners"));
+
+  // Greeting someone by their phone number is worse than not greeting them.
+  await test("a chat saved as a number is greeted with no name at all", () => {
+    assert.strictEqual(greet("+91 00000 00000"), "Good morning");
+    assert.strictEqual(greet("910000000000"), "Good morning");
+    assert.strictEqual(greet(""), "Good morning");
+  });
+
+  await test("no dangling comma when there is no name", () =>
+    assert.strictEqual(live.personalise("Hi {name}, C5 is firm today", who("+971 50 123 4567")),
+      "Hi, C5 is firm today"));
+
+  await test("the message is untouched when it asks for no name", () => {
+    const plain = "C5 fixed at 24.50, BHP/RIO steady";
+    assert.strictEqual(live.personalise(plain, who("the owner")), plain);
+    assert.strictEqual(live.hasTokens(plain), false);
+  });
+
+  await test("{fullname} gives the name exactly as it is saved", () =>
+    assert.strictEqual(live.personalise("To {fullname}:", who("Meridian Shipping Pte Ltd")),
+      "To Meridian Shipping Pte Ltd:"));
+
+  await test("spacing and case in the token do not matter", () => {
+    for (const tok of ["{name}", "{ name }", "{Name}", "{firstname}", "{first_name}"]) {
+      assert.strictEqual(live.personalise(`Hi ${tok}`, who("the owner")), "Hi the owner", tok);
+    }
+  });
+
+  await test("the same name is used more than once when asked for twice", () =>
+    assert.strictEqual(live.personalise("{name}, morning. Thanks {name}.", who("the owner")),
+      "the owner, morning. Thanks the owner."));
+
+  await test("every chat in a send gets its own name", async () => {
+    live.saveLists([{ id: "main", name: "Main list", chats: [
+      { id: "a@c.us", name: "Meridian Shipping Pte Ltd" },
+      { id: "b@c.us", name: "Dalton — Northwind" },
+    ] }]);
+    const st = await live.broadcast("Good morning {name}", { dryRun: true });
+    assert.strictEqual(st.personalised, true);
+    await waitDone();
+    assert.deepStrictEqual(live.broadcastStatus().results.map((r) => r.text),
+      ["Good morning Meridian", "Good morning Dalton"]);
+  });
+
+  await test("a name is data, never a template of its own", () => {
+    // A contact could be saved as "{fullname}". Substituting must happen once,
+    // so a name can never expand into anything else.
+    const out = live.personalise("Hi {name}", who("{name} {fullname}"));
+    assert.ok(!out.includes("{"), `a token survived into the message: ${out}`);
+    assert.strictEqual(out, "Hi Name");
+  });
+
   console.log("\nwhat a failed chat says");
 
   await test("WhatsApp's internal wording never reaches the screen", () => {
