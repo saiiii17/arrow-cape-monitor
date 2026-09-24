@@ -214,11 +214,8 @@
      The desktop layout above is untouched; everything here applies only on
      narrow screens, which is how the app runs when installed on an iPhone. */
   nav button i, nav button .sm{display:none}
-  #build{margin-left:12px;font-size:11px;color:var(--faint);font-family:var(--mono);
-    white-space:normal;overflow-wrap:anywhere}
   @media (max-width:760px){
     .brand{flex-wrap:wrap}
-    #build{flex:1 1 100%;margin:4px 0 0;font-size:12px;line-height:1.45}
   }
   #signout{margin-left:14px;font-size:12px;font-weight:500;color:var(--faint);text-decoration:none}
   #signout:hover{color:var(--ink)}
@@ -327,7 +324,7 @@
 <body>
 
 <header>
-  <div class="brand">Arrow Cape <span>· monitor</span><span id="brandLive" hidden class="livedot" title="Live — capturing WhatsApp"></span><span id="build" hidden></span><a id="signout" href="/api/logout" hidden>Sign out</a></div>
+  <div class="brand">Arrow Cape <span>· monitor</span><span id="brandLive" hidden class="livedot" title="Live — capturing WhatsApp"></span><a id="signout" href="/api/logout" hidden>Sign out</a></div>
   <nav role="tablist">
     <button role="tab" id="tab-c5" aria-selected="true" aria-label="C5 Accounts"><i aria-hidden="true">📊</i><span class="lg">C5 Accounts</span><span class="sm">C5</span></button>
     <button role="tab" id="tab-c3" aria-selected="false" aria-label="C3 Cargo and Tonnage"><i aria-hidden="true">🚢</i><span class="lg">C3 Cargo &amp; Tonnage</span><span class="sm">C3</span></button>
@@ -537,21 +534,6 @@
   window.fetch = async (...a) => { const r = await f(...a); if (r.status === 401) location.href = "/login"; return r; }; }
 fetch("/api/session").then(r=>r.json()).then(d=>{
   if(d.auth) document.getElementById("signout").hidden=false;
-  const b=document.getElementById("build");
-  if(b&&d.build){
-    // The phone's own numbers, on screen: guessing from screenshots has cost
-    // several rounds. win = what the browser thinks the window is, body = what
-    // the layout actually fills, card = the widest thing being drawn.
-    const show=()=>{
-      const card=[...document.querySelectorAll("main .card")].map(e=>Math.round(e.getBoundingClientRect().width)).sort((x,y)=>y-x)[0]||0;
-      const nav=document.querySelector("nav").getBoundingClientRect();
-      const probe=document.createElement("div");
-      probe.style.cssText="position:fixed;left:0;bottom:0;width:1px;height:env(safe-area-inset-bottom)";
-      document.body.appendChild(probe); const safeB=Math.round(probe.getBoundingClientRect().height); probe.remove();
-      b.textContent=`${d.build} · win ${innerWidth}x${innerHeight} · screen ${screen.width}x${screen.height} · body ${Math.round(document.body.getBoundingClientRect().width)} · card ${card} · bar ${Math.round(nav.top)}-${Math.round(nav.bottom)} · safeB ${safeB}`;
-    };
-    show(); setInterval(show,1000); b.hidden=false;
-  }
 }).catch(()=>{});
 const $ = (s) => document.querySelector(s);
 const ACCTS = ["RIO","FMG","BHP"];
