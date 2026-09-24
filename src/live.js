@@ -125,7 +125,7 @@ const PULL_TIMEOUT_MS = Number(process.env.PULL_TIMEOUT_MS || 120_000);
 // app decided it was linked with nobody logged in, and served "saved WhatsApp
 // data" instead of the owner's exports after a reset. This flag is written when a
 // session actually authenticates and removed when it is torn down.
-const LINKED_FLAG = path.join(__dirname, "..", "data", "linked.flag");
+const LINKED_FLAG = process.env.LINKED_FLAG || path.join(__dirname, "..", "data", "linked.flag");
 function markLinked(on) {
   try {
     if (on) { fs.mkdirSync(path.dirname(LINKED_FLAG), { recursive: true }); fs.writeFileSync(LINKED_FLAG, new Date().toISOString()); }
@@ -1306,7 +1306,11 @@ function logout({ unlink = true, wipe = false, clearData = false } = {}) {
   state.syncing = false;
   state.lastSync = null;
   clearInterval(state.authWatchdog);
-  markLinked(false);
+  // Only a real unlink means the device is no longer linked. Closing the
+  // browser -- a shutdown, or Reset, which keeps the login -- must leave this
+  // alone, or the next start decides it was never linked and offers sample
+  // data in place of the account's own messages.
+  if (unlink) markLinked(false);
   process.env.WA_CONNECTED = ""; // sample data may show again once unlinked
   step("Not connected");
 
@@ -1328,7 +1332,7 @@ function logout({ unlink = true, wipe = false, clearData = false } = {}) {
   // resolve the user may already have pressed Connect, and killing the
   // profile then takes down the browser they are waiting on.
   const gen = bumpGeneration();
-  (async () => {
+  return (async () => {
     const withTimeout = (fn, ms) => Promise.race([Promise.resolve().then(fn).catch(() => {}), new Promise((r) => setTimeout(r, ms))]);
     if (c) {
       if (unlink) await withTimeout(() => c.logout(), 6000);
@@ -1339,6 +1343,15 @@ function logout({ unlink = true, wipe = false, clearData = false } = {}) {
     if (!isCurrent(gen)) return;
     await clearStaleProfileLockAsync(); // belt-and-braces: release the lock
   })().catch(() => {});
+}
+
+// Stopping the server must never unlink WhatsApp. The shutdown handler used to
+// call logout() bare, and its default is unlink: true -- so every Ctrl-C, every
+// `kill`, and every redeploy on a host that stops a service with SIGTERM told
+// WhatsApp to remove this device, and the next start sat at a QR code. Closing
+// the browser is all that is wanted: the session on disk stays valid.
+async function shutdown() {
+  try { await logout({ unlink: false }); } catch { /* going down anyway */ }
 }
 
 // ---------------------------------------------------------------------------
@@ -1589,14 +1602,96 @@ function sendErrorText(e) {
   return raw.slice(0, 160);
 }
 
+// whatsapp-web.js addresses a chat by building a Wid from the id and looking
+// it up. WhatsApp has since moved conversations to linked ids, and the library
+// predates that: the number has no chat filed under it, and a lid cannot be
+// turned into a Wid at all. Both routes fail, which is the "must include an id
+// property" error.
+//
+// So the chat model is found here instead -- by the id as stored, by the lid
+// that now carries that number, or by asking WhatsApp to open one -- and the
+// message goes out through WhatsApp's own send function against that model.
+async function sendViaPage(id, { text = "", mediaPath = "" } = {}) {
+  let media = null;
+  if (mediaPath) {
+    const m = MessageMedia.fromFilePath(mediaPath);
+    media = { mimetype: m.mimetype, data: m.data, filename: m.filename };
+  }
+  return client.pupPage.evaluate(async (chatId, body, attachment) => {
+    const C = window.require("WAWebCollections");
+    const ser = (v) => { try { return String((v && (v._serialized || v)) || ""); } catch { return ""; } };
+
+    let chat = null;
+    try { chat = C.Chat.get(chatId) || null; } catch { /* keep looking */ }
+
+    // Stored as a number, but WhatsApp files the conversation under a lid.
+    if (!chat && /@c\.us$/.test(chatId)) {
+      let M = null;
+      try { M = window.require("WAWebLidMigrationUtils"); } catch { /* older build */ }
+      for (const c of C.Chat.getModelsArray()) {
+        const own = ser(c.id);
+        if (!own.endsWith("@lid")) continue;
+        let pn = "";
+        if (M && typeof M.toPn === "function") { try { pn = ser(M.toPn(c.id)); } catch { /* next */ } }
+        if (!pn) { try { pn = ser(c.contact && c.contact.phoneNumber); } catch { /* next */ } }
+        if (!pn) { try { pn = ser(c.historyChatId); } catch { /* next */ } }
+        if (pn === chatId) { chat = c; break; }
+      }
+    }
+
+    // Never spoken to before: ask WhatsApp to open the conversation.
+    if (!chat) {
+      try {
+        const wid = window.require("WAWebWidFactory").createWid(chatId);
+        const made = await window.require("WAWebFindChatAction").findOrCreateLatestChat(wid);
+        chat = (made && (made.chat || made)) || null;
+      } catch (e) { throw new Error("could not open a chat for " + chatId + ": " + e.message); }
+    }
+    if (!chat) throw new Error("no chat on this device for " + chatId);
+
+    const options = {
+      linkPreview: true, parseVCards: true, mentionedJidList: [],
+      ignoreQuoteErrors: true, waitUntilMsgSent: false,
+    };
+    let content = body;
+    if (attachment) { options.media = attachment; options.caption = body; content = ""; }
+
+    const msg = await window.WWebJS.sendMessage(chat, content, options);
+    const model = msg ? window.WWebJS.getMessageModel(msg) : null;
+    return { id: (model && model.id && (model.id._serialized || String(model.id))) || "" };
+  }, String(id), String(text || ""), media);
+}
+
 // Says whether a chat can be sent to, without sending anything to anyone.
 async function checkSendable(id) {
   if (state.status !== "ready" || !client) throw new Error("WhatsApp is not connected");
   const raw = String(id || "");
   const resolved = (await resolvePhoneIds([raw])).get(raw) || raw;
   const out = { asked: raw, resolved };
-  try { const c = await client.getChatById(resolved); out.getChatById = c ? `ok — ${c.name || c.id._serialized}` : "returned nothing"; }
-  catch (e) { out.getChatById = "FAILED: " + String((e && e.message) || e).slice(0, 200); }
+  try { const c = await client.getChatById(resolved); out.viaLibrary = c ? `ok — ${c.name || c.id._serialized}` : "returned nothing"; }
+  catch (e) { out.viaLibrary = "FAILED: " + String((e && e.message) || e).slice(0, 120); }
+  // The same lookup the send uses, run without sending anything.
+  try {
+    out.chatFound = await client.pupPage.evaluate((chatId) => {
+      const C = window.require("WAWebCollections");
+      const ser = (v) => { try { return String((v && (v._serialized || v)) || ""); } catch { return ""; } };
+      let chat = null;
+      try { chat = C.Chat.get(chatId) || null; } catch { /* keep looking */ }
+      if (chat) return `found directly — ${chat.formattedTitle || ser(chat.id)}`;
+      if (/@c\.us$/.test(chatId)) {
+        let M = null; try { M = window.require("WAWebLidMigrationUtils"); } catch { /* older */ }
+        for (const c of C.Chat.getModelsArray()) {
+          if (!ser(c.id).endsWith("@lid")) continue;
+          let pn = "";
+          if (M && typeof M.toPn === "function") { try { pn = ser(M.toPn(c.id)); } catch { /* next */ } }
+          if (!pn) { try { pn = ser(c.contact && c.contact.phoneNumber); } catch { /* next */ } }
+          if (!pn) { try { pn = ser(c.historyChatId); } catch { /* next */ } }
+          if (pn === chatId) return `found under its linked id — ${c.formattedTitle || ser(c.id)}`;
+        }
+      }
+      return "NOT FOUND in the chat collection";
+    }, resolved);
+  } catch (e) { out.chatFound = "err: " + String((e && e.message) || e).slice(0, 120); }
   try {
     out.pageSide = await client.pupPage.evaluate((wid, lid) => {
       const r = {};
@@ -1941,12 +2036,22 @@ async function broadcast(text, { dryRun = false, origin = "app", listId = "", me
         r.text = mine;
         if (!dryRun) {
           const to = targets[i].sendId || targets[i].id;
-          const sent = media
-            ? await client.sendMessage(to, MessageMedia.fromFilePath(media), mine ? { caption: mine } : {})
-            : await client.sendMessage(to, mine);
-          rememberSent(sent);
+          let messageId = "";
+          try {
+            const out = await sendViaPage(to, { text: mine, mediaPath: media });
+            messageId = (out && out.id) || "";
+          } catch (e) {
+            // The library still works for chats WhatsApp has not moved, so it
+            // is worth one try before giving up on this chat.
+            console.error("  [wa] direct send failed, falling back:", String((e && e.message) || e));
+            const sent = media
+              ? await client.sendMessage(to, MessageMedia.fromFilePath(media), mine ? { caption: mine } : {})
+              : await client.sendMessage(to, mine);
+            rememberSent(sent);
+            messageId = (sent && sent.id && (sent.id._serialized || String(sent.id))) || "";
+          }
           // Kept so the message can be recalled and its delivery followed.
-          r.messageId = (sent && sent.id && (sent.id._serialized || String(sent.id))) || "";
+          r.messageId = messageId;
         }
         r.state = "sent"; r.at = new Date().toISOString();
         bc.sent++;
@@ -2829,6 +2934,7 @@ function environmentInfo() {
 }
 
 module.exports = {
+  shutdown,
   personalise, friendlyNameOf, hasTokens,
   checkSendable,
   sendErrorText,

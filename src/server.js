@@ -489,13 +489,15 @@ process.on("uncaughtException", (err) => {
 
 // A killed server leaves its headless Chrome holding the WhatsApp profile lock,
 // which makes the next start fail with "browser is already running".
+let stopping = false;
 for (const sig of ["SIGINT", "SIGTERM"]) {
   process.on(sig, async () => {
-    try {
-      await live.logout();
-    } catch {
-      /* ignore */
-    }
+    if (stopping) process.exit(0);   // a second Ctrl-C means now
+    stopping = true;
+    // Close the browser; do NOT log out. logout() defaults to unlinking the
+    // device, which is why stopping the server used to cost a fresh QR scan.
+    const capped = new Promise((r) => setTimeout(r, 8000));
+    try { await Promise.race([live.shutdown(), capped]); } catch { /* going down */ }
     process.exit(0);
   });
 }
