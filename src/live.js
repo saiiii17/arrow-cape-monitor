@@ -1461,6 +1461,55 @@ function saveTags(list) {
 
 // Every chat the user could tag: groups from the local database (reliable),
 // plus one-to-one chats from WhatsApp's in-memory chat list.
+// WhatsApp has started keying some private chats by a "linked id" -- an
+// opaque 1234…@lid instead of the phone number. sendMessage cannot address
+// one: its store looks the id up, gets nothing back, and throws "Data passed
+// to getter must include an id property", which is what a broker would see as
+// a failed send. So a lid is translated to the @c.us the send path wants.
+const lidToPhone = new Map();
+async function phoneIdFor(id) {
+  const raw = String(id || "");
+  if (!raw.endsWith("@lid")) return raw;
+  if (lidToPhone.has(raw)) return lidToPhone.get(raw);
+  let out = raw;
+  try {
+    out = await client.pupPage.evaluate((lid) => {
+      const C = window.require("WAWebCollections");
+      const phone = (v) => {
+        const t = String((v && (v._serialized || v)) || "");
+        return /^\d+@c\.us$/.test(t) ? t : "";
+      };
+      // The chat's own contact record normally still carries the number.
+      const chat = C.Chat && C.Chat.get ? C.Chat.get(lid) : null;
+      if (chat) {
+        const c = chat.contact || {};
+        for (const v of [c.id, c.phoneNumber, chat.contactPn, chat.pn, chat.phoneNumber]) {
+          const t = phone(v); if (t) return t;
+        }
+      }
+      // Otherwise find the contact that this lid belongs to.
+      if (C.Contact && typeof C.Contact.getModelsArray === "function") {
+        for (const c of C.Contact.getModelsArray()) {
+          const ids = [c.lid, c.lidId, c.id].map((v) => String((v && (v._serialized || v)) || ""));
+          if (ids.includes(lid)) { const t = phone(c.id) || phone(c.phoneNumber); if (t) return t; }
+        }
+      }
+      return lid;
+    }, raw);
+  } catch { /* fall back to the lid; the send then fails honestly */ }
+  if (out !== raw) lidToPhone.set(raw, out);
+  return out;
+}
+
+// WhatsApp's internals leak wording no broker should ever read.
+function sendErrorText(e) {
+  const raw = String((e && e.message) || e);
+  if (/must include an id property/i.test(raw) || /getter/i.test(raw)) {
+    return "WhatsApp could not address this chat — open it once on your phone, then untick and tick it again here";
+  }
+  return raw.slice(0, 160);
+}
+
 async function listChats() {
   if (state.status !== "ready" || !client) throw new Error("WhatsApp is not connected");
   if (!state.groups.length) await refreshGroups().catch(() => {});
@@ -1473,11 +1522,15 @@ async function listChats() {
       return C.Chat.getModelsArray()
         .map((c) => ({ c, id: String((c.id && c.id._serialized) || "") }))
         .filter(({ id }) => id && !/@(g\.us|broadcast|newsletter)$/.test(id))
-        .map(({ c, id }) => ({
-          id,
-          name: c.formattedTitle || c.name || (c.contact && (c.contact.name || c.contact.pushname)) || id.split("@")[0],
-          isGroup: false,
-        }));
+        .map(({ c, id }) => {
+          // Store the number where it can be had: a lid is not sendable.
+          const t = String(((c.contact && c.contact.id && c.contact.id._serialized) || "") || "");
+          return {
+            id: id.endsWith("@lid") && /^\d+@c\.us$/.test(t) ? t : id,
+            name: c.formattedTitle || c.name || (c.contact && (c.contact.name || c.contact.pushname)) || id.split("@")[0],
+            isGroup: false,
+          };
+        });
     });
     for (const d of direct) if (!out.has(d.id)) out.set(d.id, d);
   } catch {
@@ -1699,9 +1752,10 @@ async function broadcast(text, { dryRun = false, origin = "app", listId = "", me
       r.state = "sending";
       try {
         if (!dryRun) {
+          const to = await phoneIdFor(targets[i].id);
           const sent = media
-            ? await client.sendMessage(targets[i].id, MessageMedia.fromFilePath(media), body ? { caption: body } : {})
-            : await client.sendMessage(targets[i].id, body);
+            ? await client.sendMessage(to, MessageMedia.fromFilePath(media), body ? { caption: body } : {})
+            : await client.sendMessage(to, body);
           rememberSent(sent);
           // Kept so the message can be recalled and its delivery followed.
           r.messageId = (sent && sent.id && (sent.id._serialized || String(sent.id))) || "";
@@ -1709,7 +1763,7 @@ async function broadcast(text, { dryRun = false, origin = "app", listId = "", me
         r.state = "sent"; r.at = new Date().toISOString();
         bc.sent++;
       } catch (e) {
-        r.state = "failed"; r.error = String((e && e.message) || e).slice(0, 160);
+        r.state = "failed"; r.error = sendErrorText(e);
         bc.failed++;
       }
       bc.done++;

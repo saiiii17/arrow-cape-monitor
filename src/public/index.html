@@ -204,6 +204,42 @@
 
   pre.rundown{margin:0;padding:14px;font-family:var(--mono);font-size:12.5px;line-height:1.6;
     white-space:pre-wrap;word-break:break-word}
+  /* Asking a question in the app's own voice. The browser's prompt() and
+     confirm() are unstyled, cannot show a message preview, and on an installed
+     iPhone app they look like a webpage breaking out of the app. */
+  #sheetWrap{position:fixed;inset:0;z-index:60;display:none;align-items:center;justify-content:center;padding:20px}
+  #sheetWrap.show{display:flex}
+  #sheetWrap::before{content:"";position:absolute;inset:0;background:rgba(10,12,16,.45);
+    -webkit-backdrop-filter:blur(3px);backdrop-filter:blur(3px)}
+  .sheet{position:relative;width:100%;max-width:440px;background:var(--panel);border:1px solid var(--line);
+    border-radius:16px;box-shadow:0 24px 70px rgba(0,0,0,.35);padding:20px 20px 16px;
+    animation:sheetIn .16s ease-out}
+  @keyframes sheetIn{from{opacity:0;transform:translateY(8px) scale(.985)}to{opacity:1;transform:none}}
+  @media (prefers-reduced-motion:reduce){.sheet{animation:none}}
+  .sheet h3{margin:0 0 6px;font-size:16px;letter-spacing:-.01em}
+  .sheet .say{margin:0 0 14px;font-size:13.5px;line-height:1.5;color:var(--dim)}
+  .sheet .say b{color:var(--ink);font-weight:600}
+  .sheet input.text{width:100%;font-size:16px;padding:10px 12px;border-radius:10px;border:1px solid var(--line);
+    background:var(--sunk);color:var(--ink);outline:none}
+  .sheet input.text:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
+  .sheet .peek{max-height:132px;overflow:auto;background:var(--sunk);border:1px solid var(--line2);
+    border-radius:10px;padding:10px 12px;font-size:13px;line-height:1.5;white-space:pre-wrap;
+    overflow-wrap:anywhere;margin:0 0 14px}
+  .sheet .peek .att{display:block;color:var(--dim);font-size:12.5px;margin-bottom:6px}
+  .sheet .acts{display:flex;gap:8px;justify-content:flex-end;margin-top:16px}
+  .sheet .acts button{font-size:14px;padding:9px 16px;border-radius:10px;min-height:40px}
+  .sheet .acts button.danger{background:var(--bad);border-color:var(--bad);color:#fff;font-weight:500}
+  .sheet .acts button.danger:hover{filter:brightness(1.08)}
+  @media (max-width:760px){
+    /* A sheet rising from the bottom is what an iPhone app does, and it sits
+       within thumb reach instead of under the notch. */
+    #sheetWrap{align-items:flex-end;padding:0}
+    .sheet{max-width:none;border-radius:18px 18px 0 0;border-bottom:0;
+      padding-bottom:calc(16px + env(safe-area-inset-bottom));animation:sheetUp .2s ease-out}
+    .sheet .acts{flex-direction:column-reverse}
+    .sheet .acts button{width:100%;min-height:46px;font-size:15px}
+  }
+  @keyframes sheetUp{from{transform:translateY(100%)}to{transform:none}}
   #toast{position:fixed;bottom:22px;left:50%;transform:translateX(-50%);background:var(--ink);color:var(--bg);
     padding:9px 18px;border-radius:8px;font-size:13px;opacity:0;transition:opacity .2s;pointer-events:none;z-index:50}
   #toast.show{opacity:1}
@@ -524,7 +560,8 @@
   </section>
 </main>
 
-<div id="toast"></div>
+<div id="sheetWrap" role="dialog" aria-modal="true" aria-labelledby="sheetTitle"></div>
+  <div id="toast"></div>
 <div id="pop" hidden><div class="ph"></div><pre></pre><div class="hint">double-click the row to pin it open</div></div>
 
 <script>
@@ -539,6 +576,66 @@ const $ = (s) => document.querySelector(s);
 const ACCTS = ["RIO","FMG","BHP"];
 let c5 = null, c3 = null, view = "c5";
 
+// One dialog for every question the app asks. Resolves to the typed text, to
+// true/false for a confirmation, or to null when it is dismissed.
+function sheet({ title, say = "", peek = null, input = null, confirm = "OK", cancel = "Cancel", danger = false }){
+  return new Promise((resolve) => {
+    const wrap = $("#sheetWrap");
+    const box = el("div","sheet");
+    const h = el("h3",null,title); h.id="sheetTitle"; box.append(h);
+    if(say){ const p=el("p","say"); p.innerHTML=say; box.append(p); }
+    if(peek){ box.append(peek); }
+    let field=null;
+    if(input){
+      field=el("input","text");
+      field.type="text"; field.value=input.value||""; field.placeholder=input.placeholder||"";
+      field.maxLength=60; field.autocapitalize="words"; field.enterKeyHint="done";
+      box.append(field);
+    }
+    const acts=el("div","acts");
+    const no=el("button","btn",cancel);
+    const yes=el("button",danger?"btn danger":"btn primary",confirm);
+    acts.append(no,yes); box.append(acts);
+
+    let done=false;
+    const close=(v)=>{
+      if(done) return; done=true;
+      wrap.classList.remove("show"); wrap.innerHTML="";
+      document.removeEventListener("keydown",onKey,true);
+      if(lastFocus&&lastFocus.focus) try{ lastFocus.focus(); }catch{}
+      resolve(v);
+    };
+    const accept=()=>{
+      if(!field) return close(true);
+      const v=field.value.trim();
+      if(!v){ field.focus(); field.select(); return; }   // a nameless list helps nobody
+      close(v);
+    };
+    const onKey=(e)=>{
+      if(e.key==="Escape"){ e.preventDefault(); close(field?null:false); }
+      else if(e.key==="Enter"&&!e.shiftKey){ e.preventDefault(); accept(); }
+      else if(e.key==="Tab"){
+        // Keep the keyboard inside the dialog.
+        const f=[...box.querySelectorAll("input,button")].filter(x=>!x.disabled);
+        if(!f.length) return;
+        const i=f.indexOf(document.activeElement);
+        const n=e.shiftKey ? (i<=0?f.length-1:i-1) : (i===f.length-1?0:i+1);
+        e.preventDefault(); f[n].focus();
+      }
+    };
+    no.onclick=()=>close(field?null:false);
+    yes.onclick=accept;
+    wrap.onclick=(e)=>{ if(e.target===wrap) close(field?null:false); };
+
+    const lastFocus=document.activeElement;
+    wrap.innerHTML=""; wrap.append(box); wrap.classList.add("show");
+    document.addEventListener("keydown",onKey,true);
+    // iOS only raises the keyboard for a focus that follows a real tap.
+    setTimeout(()=>{ if(field){ field.focus(); field.select(); } else yes.focus(); },30);
+  });
+}
+
+const esc=(t)=>String(t).replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
 const toast = (m) => { const t=$("#toast"); t.textContent=m; t.classList.add("show"); setTimeout(()=>t.classList.remove("show"),2600); };
 // Every async loader races itself. Click two dates in quick succession -- or
 // work on a connection where one request is slower than the next -- and the
@@ -686,7 +783,9 @@ async function loadBroadcast(){
 
 $("#bcListSel").onchange=()=>switchList($("#bcListSel").value);
 $("#bcNewList").onclick=async()=>{
-  const name=(prompt("Name this list (e.g. Owners, Charterers, Team)")||"").trim();
+  const name=await sheet({ title:"New list",
+    say:"Lists keep groups of chats apart — Owners, Charterers, the desk — so one message goes to exactly the right people.",
+    input:{ placeholder:"e.g. Owners" }, confirm:"Create list" });
   if(!name) return;
   const id="l"+Date.now().toString(36);
   bcLists.push({id,name,chats:[]});
@@ -695,14 +794,16 @@ $("#bcNewList").onclick=async()=>{
 };
 $("#bcRenameList").onclick=async()=>{
   const l=currentList(); if(!l) return;
-  const name=(prompt("Rename this list", l.name)||"").trim();
-  if(!name) return;
+  const name=await sheet({ title:"Rename list", input:{ value:l.name }, confirm:"Save" });
+  if(!name||name===l.name) return;
   l.name=name; await saveLists(); renderListPickers(); toast("Renamed");
 };
 $("#bcDelList").onclick=async()=>{
   const l=currentList(); if(!l) return;
   if(bcLists.length<2){ toast("Keep at least one list"); return; }
-  if(!confirm(`Delete the list “${l.name}” with its ${l.chats.length} chat(s)?\n\nThe chats themselves are not touched.`)) return;
+  const n=l.chats.length;
+  if(!await sheet({ title:`Delete “${l.name}”?`, danger:true, confirm:"Delete list",
+    say:`This removes the list and the ${n} chat${n===1?"":"s"} in it. <b>The chats themselves are not touched</b> — nothing is deleted in WhatsApp, and you can tick them into another list any time.` })) return;
   bcLists=bcLists.filter(x=>x.id!==l.id);
   await saveLists(); switchList(bcLists[0].id); renderListPickers(); toast("List deleted");
 };
@@ -729,7 +830,8 @@ $("#bcFile").onchange=async(e)=>{
 };
 
 $("#bcRecall").onclick=async(e)=>{
-  if(!confirm("Delete the last broadcast for everyone?\n\nWhatsApp only allows this for about two days, and anyone who already read it has seen it. Each chat will show “This message was deleted”.")) return;
+  if(!await sheet({ title:"Delete for everyone?", danger:true, confirm:"Delete for everyone",
+    say:"Every chat will show <b>“This message was deleted”</b> instead. WhatsApp only allows this for about two days, and anyone who already read it has seen it." })) return;
   e.target.disabled=true;
   try{
     const r=await fetch("/api/broadcast/recall",{method:"POST"});
@@ -811,8 +913,12 @@ $("#bcSend").onclick=async()=>{
   if(!text && !bcMedia){ toast("Type a message or attach a file"); return; }
   const n=bcTags.size; if(!n) return;
   const l=currentList();
-  const what=bcMedia ? `${bcMedia.name}${text?"\n\n"+text.slice(0,200):""}` : text.slice(0,300);
-  if(!confirm(`Send to ${n} chat${n===1?"":"s"} in “${l?l.name:""}”?\n\n${what}`)) return;
+  // Show exactly what is about to go out: this cannot be taken back quietly.
+  const peek=el("div","peek");
+  if(bcMedia) peek.append(el("span","att",`${bcMedia.isImage?"🖼":"📄"} ${bcMedia.name}`));
+  peek.append(document.createTextNode(text||"(no caption)"));
+  if(!await sheet({ title:`Send to ${n} chat${n===1?"":"s"}?`, confirm:"Send now", peek,
+    say:`Going to every chat in <b>${esc(l?l.name:"")}</b>, one at a time.` })) return;
   $("#bcSend").disabled=true;
   const r=await fetch("/api/broadcast/send",{method:"POST",headers:{"Content-Type":"application/json"},
     body:JSON.stringify({text,listId:bcListId,mediaId:bcMedia?bcMedia.mediaId:""})});

@@ -10,6 +10,15 @@ const URL = process.env.UI_TEST_URL || "http://localhost:4321";
 let pass = 0, fail = 0;
 const ok = (n, c, d = "") => { c ? (pass++, console.log(`  ok   ${n}`)) : (fail++, console.log(`  FAIL ${n}${d ? "\n       " + d : ""}`)); };
 const val = (p, s) => p.$eval(s, (e) => e.value);
+// The app asks with its own sheet rather than the browser's confirm(), so the
+// tests drive that instead of puppeteer's dialog events.
+const sheetUp = (p) => p.evaluate(() => document.querySelector("#sheetWrap").classList.contains("show"));
+const sheetText = (p) => p.evaluate(() => document.querySelector("#sheetWrap").innerText);
+const press = (p, label) => p.evaluate((l) => {
+  const b = [...document.querySelectorAll("#sheetWrap .acts button")].find((x) => x.textContent.trim() === l);
+  if (b) b.click();
+  return Boolean(b);
+}, label);
 
 (async () => {
   const b = await puppeteer.launch({ headless: true, args: ["--no-sandbox"] });
@@ -312,8 +321,9 @@ const val = (p, s) => p.$eval(s, (e) => e.value);
   await p.click("#tab-bc");
   await new Promise(r => setTimeout(r, 2000));
   {
-    // Nothing here may touch a real WhatsApp: the confirm dialog is always
-    // dismissed, and only the list/upload endpoints are exercised.
+    // Nothing here may touch a real WhatsApp. The app asks with its own sheet
+    // now, not the browser's confirm(); a stray native dialog would hang the
+    // run, so anything that does appear is dismissed.
     p.on("dialog", async (d) => { await d.dismiss(); });
 
     ok("every new control is on the page", await p.evaluate(() =>
@@ -365,6 +375,58 @@ const val = (p, s) => p.$eval(s, (e) => e.value);
     });
     ok("the test list is cleaned up",
        await p.$$eval("#bcListSel option", (o) => o.every((x) => x.value !== "uitest")));
+  }
+
+  console.log("\nthe app asks its own questions, not the browser's");
+  {
+    let native = false;
+    const spy = () => { native = true; };
+    p.on("dialog", spy);
+
+    await p.click("#bcNewList");
+    await new Promise(r => setTimeout(r, 300));
+    ok("New list opens the in-app sheet", await sheetUp(p));
+    ok("it explains what a list is for", (await sheetText(p)).toLowerCase().includes("owners"));
+    ok("the text field is focused ready to type",
+       await p.evaluate(() => document.activeElement === document.querySelector("#sheetWrap input.text")));
+
+    // An empty name must not create a nameless list.
+    await press(p, "Create list");
+    await new Promise(r => setTimeout(r, 200));
+    ok("an empty name is refused, the sheet stays open", await sheetUp(p));
+
+    await p.keyboard.press("Escape");
+    await new Promise(r => setTimeout(r, 250));
+    ok("Escape closes it", !await sheetUp(p));
+
+    // Typing a name and pressing Enter should create the list.
+    const listsBefore = await p.$$eval("#bcListSel option", (o) => o.length);
+    await p.click("#bcNewList");
+    await new Promise(r => setTimeout(r, 300));
+    await p.type("#sheetWrap input.text", "Sheet test");
+    await p.keyboard.press("Enter");
+    await new Promise(r => setTimeout(r, 900));
+    ok("Enter creates the list and closes the sheet", !await sheetUp(p));
+    ok("the new list is in the picker",
+       await p.$$eval("#bcListSel option", (o) => o.length) === listsBefore + 1);
+
+    // Deleting asks first, and Cancel must leave it alone.
+    await p.click("#bcDelList");
+    await new Promise(r => setTimeout(r, 300));
+    ok("deleting asks first", await sheetUp(p));
+    ok("it promises the chats are untouched", (await sheetText(p)).toLowerCase().includes("not touched"));
+    await press(p, "Cancel");
+    await new Promise(r => setTimeout(r, 400));
+    ok("Cancel keeps the list", await p.$$eval("#bcListSel option", (o) => o.length) === listsBefore + 1);
+
+    await p.click("#bcDelList");
+    await new Promise(r => setTimeout(r, 300));
+    await press(p, "Delete list");
+    await new Promise(r => setTimeout(r, 900));
+    ok("confirming removes it", await p.$$eval("#bcListSel option", (o) => o.length) === listsBefore);
+
+    ok("no native browser dialog was ever used", native === false);
+    p.off("dialog", spy);
   }
 
   console.log("\nno JS errors");
