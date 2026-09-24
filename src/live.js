@@ -1467,38 +1467,35 @@ function saveTags(list) {
 // to getter must include an id property", which is what a broker would see as
 // a failed send. So a lid is translated to the @c.us the send path wants.
 const lidToPhone = new Map();
-async function phoneIdFor(id) {
-  const raw = String(id || "");
-  if (!raw.endsWith("@lid")) return raw;
-  if (lidToPhone.has(raw)) return lidToPhone.get(raw);
-  let out = raw;
+// Resolved in one hop for a whole list of ids: the models are already in the
+// page, so the cost is one round trip however many chats are tagged.
+async function resolvePhoneIds(ids) {
+  const want = [...new Set(ids.map(String))].filter((x) => x.endsWith("@lid") && !lidToPhone.has(x));
+  if (!want.length || !client || !client.pupPage) return lidToPhone;
   try {
-    out = await client.pupPage.evaluate((lid) => {
+    const got = await client.pupPage.evaluate((list) => {
       const C = window.require("WAWebCollections");
-      const phone = (v) => {
-        const t = String((v && (v._serialized || v)) || "");
-        return /^\d+@c\.us$/.test(t) ? t : "";
-      };
-      // The chat's own contact record normally still carries the number.
-      const chat = C.Chat && C.Chat.get ? C.Chat.get(lid) : null;
-      if (chat) {
-        const c = chat.contact || {};
-        for (const v of [c.id, c.phoneNumber, chat.contactPn, chat.pn, chat.phoneNumber]) {
-          const t = phone(v); if (t) return t;
-        }
+      let M = null;
+      try { M = window.require("WAWebLidMigrationUtils"); } catch { /* older build */ }
+      const ser = (v) => { try { return String((v && (v._serialized || v)) || ""); } catch { return ""; } };
+      const pn = (t) => (/^\d+@c\.us$/.test(t) ? t : "");
+      const out = {};
+      for (const id of list) {
+        const chat = C.Chat && C.Chat.get ? C.Chat.get(id) : null;
+        if (!chat) continue;
+        let t = "";
+        // WhatsApp's own conversion first, then the two places the number is
+        // mirrored -- the contact record, and the id the history was filed under.
+        if (M && typeof M.toPn === "function") { try { t = pn(ser(M.toPn(chat.id))); } catch { /* next */ } }
+        if (!t) { try { t = pn(ser(chat.contact && chat.contact.phoneNumber)); } catch { /* next */ } }
+        if (!t) { try { t = pn(ser(chat.historyChatId)); } catch { /* next */ } }
+        if (t) out[id] = t;
       }
-      // Otherwise find the contact that this lid belongs to.
-      if (C.Contact && typeof C.Contact.getModelsArray === "function") {
-        for (const c of C.Contact.getModelsArray()) {
-          const ids = [c.lid, c.lidId, c.id].map((v) => String((v && (v._serialized || v)) || ""));
-          if (ids.includes(lid)) { const t = phone(c.id) || phone(c.phoneNumber); if (t) return t; }
-        }
-      }
-      return lid;
-    }, raw);
-  } catch { /* fall back to the lid; the send then fails honestly */ }
-  if (out !== raw) lidToPhone.set(raw, out);
-  return out;
+      return out;
+    }, want);
+    for (const [k, v] of Object.entries(got)) lidToPhone.set(k, v);
+  } catch { /* unresolved ids simply stay as they are */ }
+  return lidToPhone;
 }
 
 // WhatsApp's internals leak wording no broker should ever read.
@@ -1508,6 +1505,51 @@ function sendErrorText(e) {
     return "WhatsApp could not address this chat — open it once on your phone, then untick and tick it again here";
   }
   return raw.slice(0, 160);
+}
+
+// Reports how this build of WhatsApp Web stores a linked id, so the mapping to
+// a real number can be built against what is actually there rather than guessed.
+async function probeLid(lid) {
+  if (!client || !client.pupPage) throw new Error("WhatsApp is not connected");
+  return client.pupPage.evaluate((want) => {
+    const out = { want, modulesWithLid: [], chat: null, contact: null, tried: {} };
+    const ser = (v) => { try { return String((v && (v._serialized || v)) || ""); } catch { return ""; } };
+    try {
+      const mods = (window.mR && window.mR.modules) || (window.require && window.require.m) || null;
+      if (mods) {
+        for (const k of Object.keys(mods)) {
+          if (/lid/i.test(k)) out.modulesWithLid.push(k);
+          if (out.modulesWithLid.length > 40) break;
+        }
+      } else out.modulesWithLid = ["(module registry not reachable)"];
+    } catch (e) { out.modulesWithLid = ["err: " + e.message]; }
+
+    try {
+      const C = window.require("WAWebCollections");
+      const ch = C.Chat && C.Chat.get ? C.Chat.get(want) : null;
+      if (ch) {
+        out.chat = { keys: Object.keys(ch).slice(0, 60), id: ser(ch.id) };
+        for (const k of Object.keys(ch)) {
+          const v = ch[k]; const t = ser(v);
+          if (/@(c\.us|lid)$/.test(t)) out.chat["field:" + k] = t.replace(/^\d+/, (m) => m.length + "digits");
+        }
+        const c = ch.contact;
+        if (c) {
+          out.contact = { keys: Object.keys(c).slice(0, 60) };
+          for (const k of Object.keys(c)) {
+            const t = ser(c[k]);
+            if (/@(c\.us|lid)$/.test(t)) out.contact["field:" + k] = t.replace(/^\d+/, (m) => m.length + "digits");
+          }
+        }
+      } else out.chat = "no chat for that id";
+    } catch (e) { out.chat = "err: " + e.message; }
+
+    for (const name of ["WAWebLidPnJidUtils","WAWebLidMigrationUtils","WAWebApiContact","WAWebUserPrefsMeUser","WAWebLidPnCache"]) {
+      try { const m = window.require(name); out.tried[name] = m ? Object.keys(m).slice(0, 18) : "empty"; }
+      catch (e) { out.tried[name] = "missing"; }
+    }
+    return out;
+  }, String(lid));
 }
 
 async function listChats() {
@@ -1522,17 +1564,19 @@ async function listChats() {
       return C.Chat.getModelsArray()
         .map((c) => ({ c, id: String((c.id && c.id._serialized) || "") }))
         .filter(({ id }) => id && !/@(g\.us|broadcast|newsletter)$/.test(id))
-        .map(({ c, id }) => {
-          // Store the number where it can be had: a lid is not sendable.
-          const t = String(((c.contact && c.contact.id && c.contact.id._serialized) || "") || "");
-          return {
-            id: id.endsWith("@lid") && /^\d+@c\.us$/.test(t) ? t : id,
-            name: c.formattedTitle || c.name || (c.contact && (c.contact.name || c.contact.pushname)) || id.split("@")[0],
-            isGroup: false,
-          };
-        });
+        .map(({ c, id }) => ({
+          id,
+          name: c.formattedTitle || c.name || (c.contact && (c.contact.name || c.contact.pushname)) || id.split("@")[0],
+          isGroup: false,
+        }));
     });
-    for (const d of direct) if (!out.has(d.id)) out.set(d.id, d);
+    // Store the number, not the linked id, so a chat ticked today can be sent
+    // to. Two entries can resolve to the same number, hence the keyed Map.
+    const map = await resolvePhoneIds(direct.map((d) => d.id));
+    for (const d of direct) {
+      const id = map.get(d.id) || d.id;
+      if (!out.has(id)) out.set(id, { ...d, id });
+    }
   } catch {
     /* groups alone are still useful */
   }
@@ -1738,6 +1782,28 @@ async function broadcast(text, { dryRun = false, origin = "app", listId = "", me
     startedAt: new Date().toISOString(), finishedAt: null,
     results: targets.map((t) => ({ id: t.id, name: t.name, state: "waiting" })),
   });
+  // A chat tagged before WhatsApp moved it to a linked id is stored under an
+  // id that cannot be sent to. Translate the whole set once, and write the
+  // numbers back to the list so it is right from here on rather than every
+  // send having to discover it again.
+  if (!dryRun) {
+    const map = await resolvePhoneIds(targets.map((t) => t.id));
+    let healed = 0;
+    for (const t of targets) {
+      const pn = map.get(t.id);
+      if (pn && pn !== t.id) { t.sendId = pn; healed++; }
+    }
+    if (healed && list) {
+      const lists = loadLists();
+      const mine = lists.find((l) => l.id === list.id);
+      if (mine) {
+        for (const c of mine.chats) { const pn = map.get(c.id); if (pn) c.id = pn; }
+        try { saveLists(lists); } catch { /* sending matters more than tidying */ }
+      }
+      step(`Updated ${healed} chat${healed === 1 ? "" : "s"} WhatsApp had moved to a new address`);
+    }
+  }
+
   const gen = generation;
   step(`Broadcast${dryRun ? " (dry run)" : ""}: sending to ${targets.length} chat${targets.length === 1 ? "" : "s"}…`);
 
@@ -1752,7 +1818,7 @@ async function broadcast(text, { dryRun = false, origin = "app", listId = "", me
       r.state = "sending";
       try {
         if (!dryRun) {
-          const to = await phoneIdFor(targets[i].id);
+          const to = targets[i].sendId || targets[i].id;
           const sent = media
             ? await client.sendMessage(to, MessageMedia.fromFilePath(media), body ? { caption: body } : {})
             : await client.sendMessage(to, body);
@@ -2640,4 +2706,6 @@ function environmentInfo() {
   };
 }
 
-module.exports = { saveUpload, recallBroadcast, refreshAcks, loadLists, saveLists, getList, profileOwner, releaseProfileLock, loadRelay, saveRelay, maybeRelay, listChats, loadTags, saveTags, broadcast, broadcastStatus, pageState, clearStaleProfileLockAsync, wipeSessionAsync, start, snapshot, backfill, syncAll, prewarm, environmentInfo, probeModules, tryHydrate, diagnoseHistoryInternals, historySince, openChatByName, inspectAfterOpen, setWatching, logout, send, refreshGroups, importExport, clearStaleProfileLock, wipeSession };
+module.exports = {
+  sendErrorText,
+  probeLid, saveUpload, recallBroadcast, refreshAcks, loadLists, saveLists, getList, profileOwner, releaseProfileLock, loadRelay, saveRelay, maybeRelay, listChats, loadTags, saveTags, broadcast, broadcastStatus, pageState, clearStaleProfileLockAsync, wipeSessionAsync, start, snapshot, backfill, syncAll, prewarm, environmentInfo, probeModules, tryHydrate, diagnoseHistoryInternals, historySince, openChatByName, inspectAfterOpen, setWatching, logout, send, refreshGroups, importExport, clearStaleProfileLock, wipeSession };

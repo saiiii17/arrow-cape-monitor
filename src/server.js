@@ -260,6 +260,7 @@ const server = http.createServer(async (req, res) => {
       }
       // Opening the chat makes WhatsApp load and DECRYPT its messages into
       // Collections.Msg; without it only encrypted raw rows are available.
+      if (url.searchParams.get("lid")) return json(res, 200, await live.probeLid(url.searchParams.get("lid")));
       if (url.searchParams.get("probe") === "1") return json(res, 200, await live.probeModules());
       if (url.searchParams.get("hydrate") === "1") return json(res, 200, await live.tryHydrate(hit.id));
       const openedInfo = await live.openChatByName(hit.name);

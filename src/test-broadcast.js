@@ -220,6 +220,23 @@ const waitDone = async () => { for (let i = 0; i < 200 && live.broadcastStatus()
     assert.doesNotMatch(fs.readFileSync(lastFile, "utf8"), /recalled/, "a dry run does not touch the saved record");
   });
 
+  console.log("\nwhat a failed chat says");
+
+  await test("WhatsApp's internal wording never reaches the screen", () => {
+    const real = "Data passed to getter must include an id property (it's how we memoize) but got undefined s (https://static.whatsapp.net/rsrc.php/v4/yy/r/UQbmAgZct11.js:85:180)";
+    const said = live.sendErrorText(new Error(real));
+    assert.ok(!/memoize|getter|rsrc\.php/.test(said), `still quoting WhatsApp: ${said}`);
+    assert.match(said, /untick and tick it again/, "and it says what to do about it");
+  });
+
+  await test("an ordinary failure is still reported as it happened", () => {
+    const said = live.sendErrorText(new Error("Phone is disconnected"));
+    assert.strictEqual(said, "Phone is disconnected");
+  });
+
+  await test("a runaway message is trimmed, not pasted whole", () =>
+    assert.ok(live.sendErrorText(new Error("x".repeat(500))).length <= 160));
+
   console.log("\ncaps and pacing");
 
   await test("a list longer than the cap is refused before a single message goes out", async () => {
