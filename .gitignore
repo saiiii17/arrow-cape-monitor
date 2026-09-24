@@ -1,6 +1,8 @@
 # secrets & local state
 .env
 .env.*
+PASSWORD.txt
+**/PASSWORD.txt
 node_modules/
 .wwebjs_auth/
 .wwebjs_cache/
