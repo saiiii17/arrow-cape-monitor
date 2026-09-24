@@ -1,5 +1,5 @@
 require("dotenv").config();
-const { Client, LocalAuth } = require("whatsapp-web.js");
+const { Client, LocalAuth, MessageMedia } = require("whatsapp-web.js");
 const QR = require("qrcode");
 const fs = require("fs");
 const path = require("path");
@@ -109,7 +109,10 @@ function containerMemory() {
   const mb = (v) => (v && /^\d+$/.test(v) ? Math.round(Number(v) / 1048576) + "MB" : v);
   return { used: mb(current), limit: mb(read("/sys/fs/cgroup/memory.max")), oomKill };
 }
-const WATCH_FILE = path.join(__dirname, "..", "data", "watched-groups.json");
+// Overridable like the other data files: a second instance (a test, a dev
+// copy) must not share this one. A test that unlinked its own isolated server
+// cleared the chosen groups out from under a live session using the default.
+const WATCH_FILE = process.env.WATCH_FILE || path.join(__dirname, "..", "data", "watched-groups.json");
 
 // Ceiling on a single group's history pull. Whatever it has managed to capture
 // by then is already written to the store, so a timeout costs progress, never
@@ -1093,7 +1096,15 @@ async function syncAll() {
       // group names that were correct all along.
       const naming = failed.every((r) => /No group named/i.test(r.error || ""));
       if (naming) step(`Could not find: ${bad}. Check the exact group name, then press Pull history`, "error");
-      else if (state.status !== "ready") step(`Could not read ${bad}: WhatsApp disconnected during the pull. Press Connect, then Pull history.`, "error");
+      else if (state.status !== "ready") {
+        // The browser died mid-pull (a crash, or the OS reclaiming memory).
+        // Reconnecting is something the app can do itself; telling the user to
+        // press Connect leaves it silently dead until someone looks at it.
+        step(`Could not read ${bad}: WhatsApp disconnected during the pull — reconnecting…`, "warn");
+        if (!relaunch("page died during history pull", { force: true })) {
+          step("Could not reconnect automatically. Press Connect, then Pull history.", "error");
+        }
+      }
       else step(`Could not read ${bad}: ${failed[0].error}. Press Pull history to try again.`, "error");
     }
   }
@@ -1340,30 +1351,112 @@ function logout({ unlink = true, wipe = false, clearData = false } = {}) {
 // and an unofficial client is the easiest kind to ban.
 // ---------------------------------------------------------------------------
 const BROADCAST_FILE = process.env.BROADCAST_FILE || path.join(__dirname, "..", "data", "broadcast-targets.json");
+// Named lists: "Brokers", "Owners", "Team". The single tag list came first, so
+// it is migrated into a list called "Main list" the first time this runs and
+// the old file is left untouched as a fallback.
+// Sits beside the tags file by default, so pointing BROADCAST_FILE at a scratch
+// directory (a test, a dev copy) isolates the lists too -- the same sharing
+// trap that let a test wipe a live session's settings earlier.
+const LISTS_FILE = process.env.LISTS_FILE || path.join(path.dirname(BROADCAST_FILE), "broadcast-lists.json");
+const newId = () => `l${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+
+function readLists() {
+  try {
+    const raw = JSON.parse(fs.readFileSync(LISTS_FILE, "utf8"));
+    if (Array.isArray(raw) && raw.length) {
+      return raw.map((l) => ({ id: String(l.id || newId()), name: String(l.name || "Untitled").slice(0, 60),
+        chats: Array.isArray(l.chats) ? l.chats.filter((c) => c && c.id) : [] }));
+    }
+  } catch { /* fall through to migration */ }
+  return null;
+}
+
+function writeLists(lists) {
+  fs.mkdirSync(path.dirname(LISTS_FILE), { recursive: true });
+  fs.writeFileSync(LISTS_FILE, JSON.stringify(lists, null, 2));
+  return lists;
+}
+
+function loadLists() {
+  const saved = readLists();
+  if (saved) return saved;
+  // First run: adopt whatever the single list held so nothing is lost.
+  let chats = [];
+  try {
+    const old = JSON.parse(fs.readFileSync(BROADCAST_FILE, "utf8"));
+    if (Array.isArray(old)) chats = old.filter((t) => t && t.id);
+  } catch { /* no old file */ }
+  return writeLists([{ id: "main", name: "Main list", chats }]);
+}
+
+function saveLists(lists) {
+  const clean = [];
+  const seenIds = new Set();
+  for (const l of Array.isArray(lists) ? lists : []) {
+    const id = String(l.id || newId());
+    if (seenIds.has(id)) continue;
+    seenIds.add(id);
+    const chats = [];
+    const seenChats = new Set();
+    for (const c of Array.isArray(l.chats) ? l.chats : []) {
+      const cid = String((c && c.id) || "").trim();
+      if (!cid || seenChats.has(cid)) continue;
+      seenChats.add(cid);
+      chats.push({ id: cid, name: String(c.name || cid).slice(0, 200), isGroup: cid.endsWith("@g.us") });
+    }
+    clean.push({ id, name: String(l.name || "Untitled").slice(0, 60), chats });
+  }
+  if (!clean.length) clean.push({ id: "main", name: "Main list", chats: [] });
+  return writeLists(clean);
+}
+
+function getList(listId) {
+  const lists = loadLists();
+  return lists.find((l) => l.id === listId) || lists[0];
+}
 const BROADCAST_MAX = Number(process.env.BROADCAST_MAX || 60);
+// Attachments live on disk, not in memory: a 10 MB image held per broadcast
+// would sit in the heap for the whole send.
+const UPLOAD_DIR = process.env.UPLOAD_DIR || path.join(path.dirname(BROADCAST_FILE), "uploads");
+const UPLOAD_MAX_BYTES = Number(process.env.UPLOAD_MAX_MB || 16) * 1024 * 1024;
+const LAST_BROADCAST_FILE = process.env.LAST_BROADCAST_FILE || path.join(path.dirname(BROADCAST_FILE), "last-broadcast.json");
+
+const EXT = { "image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp", "image/gif": ".gif",
+  "application/pdf": ".pdf", "text/plain": ".txt",
+  "application/msword": ".doc", "application/vnd.openxmlformats-officedocument.wordprocessingml.document": ".docx",
+  "application/vnd.ms-excel": ".xls", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": ".xlsx" };
+
+function saveUpload(buffer, { name = "file", type = "" } = {}) {
+  if (!buffer || !buffer.length) throw new Error("Empty file");
+  if (buffer.length > UPLOAD_MAX_BYTES) {
+    throw new Error(`That file is ${(buffer.length / 1048576).toFixed(1)} MB — the limit is ${Math.round(UPLOAD_MAX_BYTES / 1048576)} MB`);
+  }
+  const mime = String(type || "").split(";")[0].trim() || "application/octet-stream";
+  const safe = String(name).replace(/[^\w.\- ]+/g, "").slice(-80) || "file";
+  const id = `u${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+  fs.mkdirSync(UPLOAD_DIR, { recursive: true });
+  const file = path.join(UPLOAD_DIR, id + (path.extname(safe) || EXT[mime] || ""));
+  fs.writeFileSync(file, buffer);
+  return { mediaId: path.basename(file), name: safe, type: mime, size: buffer.length,
+    isImage: mime.startsWith("image/") };
+}
+
+function uploadPath(mediaId) {
+  // Basename only: a mediaId must never be able to point outside the folder.
+  const file = path.join(UPLOAD_DIR, path.basename(String(mediaId || "")));
+  if (!file.startsWith(UPLOAD_DIR) || !fs.existsSync(file)) throw new Error("That attachment is no longer available — add it again");
+  return file;
+}
 const BROADCAST_GAP_MS = Number(process.env.BROADCAST_GAP_MS || 2500);
 
 function loadTags() {
-  try {
-    const list = JSON.parse(fs.readFileSync(BROADCAST_FILE, "utf8"));
-    return Array.isArray(list) ? list.filter((t) => t && t.id) : [];
-  } catch {
-    return [];
-  }
+  return (loadLists()[0] || { chats: [] }).chats;
 }
 
 function saveTags(list) {
-  const clean = [];
-  const seen = new Set();
-  for (const t of Array.isArray(list) ? list : []) {
-    const id = String((t && t.id) || "").trim();
-    if (!id || seen.has(id)) continue;
-    seen.add(id);
-    clean.push({ id, name: String(t.name || id).slice(0, 200), isGroup: id.endsWith("@g.us") });
-  }
-  fs.mkdirSync(path.dirname(BROADCAST_FILE), { recursive: true });
-  fs.writeFileSync(BROADCAST_FILE, JSON.stringify(clean, null, 2));
-  return clean;
+  const lists = loadLists();
+  lists[0] = { ...lists[0], chats: Array.isArray(list) ? list : [] };
+  return saveLists(lists)[0].chats;
 }
 
 // Every chat the user could tag: groups from the local database (reliable),
@@ -1412,9 +1505,10 @@ const RELAY_REPLY = /^(✅|⚠️|⏳) Broadcast/;
 function loadRelay() {
   try {
     const r = JSON.parse(fs.readFileSync(RELAY_FILE, "utf8"));
-    return { enabled: Boolean(r.enabled && r.sourceId), sourceId: String(r.sourceId || ""), sourceName: String(r.sourceName || "") };
+    return { enabled: Boolean(r.enabled && r.sourceId), sourceId: String(r.sourceId || ""),
+      sourceName: String(r.sourceName || ""), listId: String(r.listId || "") };
   } catch {
-    return { enabled: false, sourceId: "", sourceName: "" };
+    return { enabled: false, sourceId: "", sourceName: "", listId: "" };
   }
 }
 
@@ -1422,6 +1516,8 @@ function saveRelay(cfg = {}) {
   const c = {
     sourceId: String(cfg.sourceId || "").trim(),
     sourceName: String(cfg.sourceName || "").slice(0, 200),
+    // Which list this group broadcasts to. Empty = the first list.
+    listId: String(cfg.listId || "").trim(),
   };
   c.enabled = Boolean(cfg.enabled) && Boolean(c.sourceId);
   fs.mkdirSync(path.dirname(RELAY_FILE), { recursive: true });
@@ -1490,22 +1586,101 @@ function broadcastStatus() {
   return { ...bc, results: bc.results.map((r) => ({ ...r })) };
 }
 
-async function broadcast(text, { dryRun = false, origin = "app" } = {}) {
+// After a restart the last broadcast is read back from disk, so Recall and the
+// delivery ticks still work for a send from before the server bounced.
+function restoreLastBroadcast() {
+  if (bc.results.length || bc.running) return;
+  try {
+    const saved = JSON.parse(fs.readFileSync(LAST_BROADCAST_FILE, "utf8"));
+    if (saved && Array.isArray(saved.results)) Object.assign(bc, saved, { running: false });
+  } catch { /* nothing sent yet */ }
+}
+
+// WhatsApp's own delivery state per message: 1 sent, 2 delivered to the phone,
+// 3 read, 4 played (voice). Read straight from its message store, so this does
+// not depend on the library's event plumbing being up.
+const ACK_LABEL = { 0: "pending", 1: "sent", 2: "delivered", 3: "read", 4: "read" };
+let lastAckAt = 0;
+async function refreshAcks({ force = false } = {}) {
+  restoreLastBroadcast();
+  const ids = bc.results.filter((r) => r.messageId && r.state !== "failed").map((r) => r.messageId);
+  if (!ids.length || state.status !== "ready" || !client) return bc;
+  if (!force && Date.now() - lastAckAt < 2500) return bc; // polled every second by the UI
+  lastAckAt = Date.now();
+  try {
+    const acks = await client.pupPage.evaluate((list) => {
+      const C = window.require("WAWebCollections");
+      return list.map((id) => {
+        try { const m = C.Msg.get(id); return m && typeof m.ack === "number" ? m.ack : -1; }
+        catch { return -1; }
+      });
+    }, ids);
+    let i = 0;
+    for (const r of bc.results) {
+      if (!r.messageId || r.state === "failed") continue;
+      const ack = acks[i++];
+      if (typeof ack === "number" && ack >= 0) r.ack = ack, r.ackLabel = ACK_LABEL[ack] || "sent";
+    }
+    bc.delivered = bc.results.filter((r) => (r.ack || 0) >= 2).length;
+    bc.read = bc.results.filter((r) => (r.ack || 0) >= 3).length;
+  } catch { /* page busy or gone; ticks simply do not advance */ }
+  return bc;
+}
+
+// Delete a broadcast for everyone. WhatsApp only allows this for a couple of
+// days after sending, and only message by message, so each chat is reported
+// separately -- some can fail while others succeed.
+async function recallBroadcast({ dryRun = false } = {}) {
+  restoreLastBroadcast();
+  const targets = bc.results.filter((r) => r.messageId && r.state === "sent" && !r.recalled);
+  if (!bc.results.length) throw new Error("Nothing has been broadcast yet");
+  if (!targets.length) throw new Error("Nothing left to recall — those messages were already deleted");
+  if (!dryRun && (state.status !== "ready" || !client)) throw new Error("WhatsApp is not connected — link it on the WhatsApp tab first");
+
+  bc.recalling = true;
+  let done = 0, failed = 0;
+  for (const r of targets) {
+    try {
+      if (!dryRun) {
+        const msg = await client.getMessageById(r.messageId);
+        if (!msg) throw new Error("message not found on this device");
+        await msg.delete(true); // true = delete for everyone
+      }
+      r.recalled = true; r.state = "recalled"; done++;
+    } catch (e) {
+      r.recallError = String((e && e.message) || e).slice(0, 140);
+      failed++;
+    }
+  }
+  bc.recalling = false;
+  bc.recalledAt = new Date().toISOString();
+  bc.recalledCount = (bc.recalledCount || 0) + done;
+  step(`Recalled ${done} message${done === 1 ? "" : "s"}${failed ? `, ${failed} could not be deleted (older than ~2 days, or already gone)` : ""}`,
+    failed ? "warn" : "ok");
+  if (!dryRun) { try { fs.writeFileSync(LAST_BROADCAST_FILE, JSON.stringify(broadcastStatus(), null, 2)); } catch { /* best effort */ } }
+  return broadcastStatus();
+}
+
+async function broadcast(text, { dryRun = false, origin = "app", listId = "", mediaId = "" } = {}) {
   const body = String(text || "").trim();
-  if (!body) throw new Error("Type a message first");
+  // With an attachment the text becomes its caption, so an empty message is fine.
+  if (!body && !mediaId) throw new Error("Type a message first");
+  const media = mediaId ? uploadPath(mediaId) : "";
   if (bc.running) throw new Error("A broadcast is already sending — wait for it to finish");
   if (!dryRun && (state.status !== "ready" || !client)) throw new Error("WhatsApp is not connected — link it on the WhatsApp tab first");
   // The broadcast group itself is never a target: sending into it would be
   // heard as a new message there and broadcast again, forever.
   const relay = loadRelay();
-  const targets = loadTags().filter((t) => !(relay.sourceId && t.id === relay.sourceId));
-  if (!targets.length) throw new Error("No chats tagged — tick at least one chat");
+  const list = getList(listId || relay.listId);
+  const targets = (list ? list.chats : []).filter((t) => !(relay.sourceId && t.id === relay.sourceId));
+  if (!targets.length) throw new Error(`No chats in "${(list && list.name) || "this list"}" — tick at least one chat`);
   if (targets.length > BROADCAST_MAX) {
     throw new Error(`${targets.length} chats are tagged; the limit is ${BROADCAST_MAX} per broadcast to keep the account clear of WhatsApp's spam checks`);
   }
 
   Object.assign(bc, {
     running: true, id: Date.now(), dryRun, origin, text: body,
+    mediaId: mediaId || "", listId: (list && list.id) || "", listName: (list && list.name) || "",
     total: targets.length, done: 0, sent: 0, failed: 0,
     startedAt: new Date().toISOString(), finishedAt: null,
     results: targets.map((t) => ({ id: t.id, name: t.name, state: "waiting" })),
@@ -1523,7 +1698,14 @@ async function broadcast(text, { dryRun = false, origin = "app" } = {}) {
       }
       r.state = "sending";
       try {
-        if (!dryRun) rememberSent(await client.sendMessage(targets[i].id, body));
+        if (!dryRun) {
+          const sent = media
+            ? await client.sendMessage(targets[i].id, MessageMedia.fromFilePath(media), body ? { caption: body } : {})
+            : await client.sendMessage(targets[i].id, body);
+          rememberSent(sent);
+          // Kept so the message can be recalled and its delivery followed.
+          r.messageId = (sent && sent.id && (sent.id._serialized || String(sent.id))) || "";
+        }
         r.state = "sent"; r.at = new Date().toISOString();
         bc.sent++;
       } catch (e) {
@@ -1538,12 +1720,14 @@ async function broadcast(text, { dryRun = false, origin = "app" } = {}) {
     }
     bc.running = false;
     bc.finishedAt = new Date().toISOString();
+    if (!dryRun) { try { fs.writeFileSync(LAST_BROADCAST_FILE, JSON.stringify(broadcastStatus(), null, 2)); } catch { /* recall is best effort */ } }
     step(`Broadcast${dryRun ? " (dry run)" : ""} finished: ${bc.sent} sent${bc.failed ? `, ${bc.failed} failed` : ""}`, bc.failed ? "warn" : "ok");
     if (origin === "group") {
       const failedNames = bc.results.filter((r) => r.state === "failed").map((r) => r.name);
+      const where = bc.listName ? ` (${bc.listName})` : "";
       await replyInRelay(bc.failed
-        ? `⚠️ Broadcast sent to ${bc.sent} of ${bc.total} chats. Failed: ${failedNames.slice(0, 10).join(", ")}${failedNames.length > 10 ? "…" : ""}`
-        : `✅ Broadcast sent to ${bc.sent} chat${bc.sent === 1 ? "" : "s"}`, { dryRun });
+        ? `⚠️ Broadcast sent to ${bc.sent} of ${bc.total} chats${where}. Failed: ${failedNames.slice(0, 10).join(", ")}${failedNames.length > 10 ? "…" : ""}`
+        : `✅ Broadcast sent to ${bc.sent} chat${bc.sent === 1 ? "" : "s"}${where}`, { dryRun });
     }
     runNextQueued();
   })().catch((e) => {
@@ -2402,4 +2586,4 @@ function environmentInfo() {
   };
 }
 
-module.exports = { profileOwner, releaseProfileLock, loadRelay, saveRelay, maybeRelay, listChats, loadTags, saveTags, broadcast, broadcastStatus, pageState, clearStaleProfileLockAsync, wipeSessionAsync, start, snapshot, backfill, syncAll, prewarm, environmentInfo, probeModules, tryHydrate, diagnoseHistoryInternals, historySince, openChatByName, inspectAfterOpen, setWatching, logout, send, refreshGroups, importExport, clearStaleProfileLock, wipeSession };
+module.exports = { saveUpload, recallBroadcast, refreshAcks, loadLists, saveLists, getList, profileOwner, releaseProfileLock, loadRelay, saveRelay, maybeRelay, listChats, loadTags, saveTags, broadcast, broadcastStatus, pageState, clearStaleProfileLockAsync, wipeSessionAsync, start, snapshot, backfill, syncAll, prewarm, environmentInfo, probeModules, tryHydrate, diagnoseHistoryInternals, historySince, openChatByName, inspectAfterOpen, setWatching, logout, send, refreshGroups, importExport, clearStaleProfileLock, wipeSession };

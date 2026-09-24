@@ -308,6 +308,65 @@ const val = (p, s) => p.$eval(s, (e) => e.value);
        `only ${reach.size} distinct messages across 4 rows`);
   }
 
+  console.log("\nbroadcast: lists, attachments, recall");
+  await p.click("#tab-bc");
+  await new Promise(r => setTimeout(r, 2000));
+  {
+    // Nothing here may touch a real WhatsApp: the confirm dialog is always
+    // dismissed, and only the list/upload endpoints are exercised.
+    p.on("dialog", async (d) => { await d.dismiss(); });
+
+    ok("every new control is on the page", await p.evaluate(() =>
+      ["#bcListSel", "#bcNewList", "#bcRenameList", "#bcDelList", "#bcFile", "#bcRecall", "#rlList"]
+        .every((s) => document.querySelector(s))));
+
+    ok("the list picker is populated", await p.$$eval("#bcListSel option", (o) => o.length) >= 1);
+    ok("Recall stays hidden until something has been sent",
+       await p.$eval("#bcRecall", (e) => e.hidden));
+
+    // Send must be impossible with an empty message -- that was a real footgun.
+    await p.$eval("#bcText", (e) => { e.value = ""; e.dispatchEvent(new Event("input")); });
+    await new Promise(r => setTimeout(r, 150));
+    ok("Send is disabled with nothing to send", await p.$eval("#bcSend", (e) => e.disabled));
+
+    const before = await p.$$eval("#bcListSel option", (o) => o.length);
+    const made = await p.evaluate(async () => {
+      const r = await fetch("/api/broadcast/lists");
+      const d = await r.json();
+      const lists = d.lists.concat([{ id: "uitest", name: "UI test list", chats: [] }]);
+      await fetch("/api/broadcast/lists", { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ lists }) });
+      await loadBroadcast();
+      return document.querySelectorAll("#bcListSel option").length;
+    });
+    ok("a new list shows up in both pickers", made === before + 1 &&
+       await p.$$eval("#rlList option", (o) => o.length) === made, `${before} -> ${made}`);
+
+    await p.select("#bcListSel", "uitest");
+    await new Promise(r => setTimeout(r, 400));
+    ok("switching list switches which chats are ticked",
+       (await p.$eval("#bcCount", (e) => e.textContent)).includes("UI test list") ||
+       await p.$$eval("#bcList input:checked", (e) => e.length) === 0);
+
+    const up = await p.evaluate(async () => {
+      const png = new Blob([new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10])], { type: "image/png" });
+      const r = await fetch("/api/broadcast/upload?name=ui.png&type=image/png", { method: "POST", body: png });
+      return r.json();
+    });
+    ok("an image uploads and comes back as an image", up.isImage === true && /\.png$/.test(up.mediaId || ""),
+       JSON.stringify(up));
+
+    // Put it back the way it was found.
+    await p.evaluate(async () => {
+      const d = await (await fetch("/api/broadcast/lists")).json();
+      await fetch("/api/broadcast/lists", { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ lists: d.lists.filter((l) => l.id !== "uitest") }) });
+      await loadBroadcast();
+    });
+    ok("the test list is cleaned up",
+       await p.$$eval("#bcListSel option", (o) => o.every((x) => x.value !== "uitest")));
+  }
+
   console.log("\nno JS errors");
   ok("page threw no errors", errs.length === 0, errs.slice(0,3).join(" | "));
 

@@ -133,6 +133,12 @@
   #bcText{width:100%;box-sizing:border-box;font:inherit;font-size:13.5px;line-height:1.5;padding:10px 12px;
     border:1px solid var(--line);border-radius:8px;background:var(--panel);color:var(--ink);resize:vertical}
   .bcbar{display:flex;gap:10px;align-items:center;margin-top:10px}
+  .tick{font-family:var(--mono);font-size:12px;letter-spacing:-.06em}
+  .tick.read{color:var(--accent)}
+  .tick.delivered{color:var(--dim)}
+  .tick.failed{color:var(--bad)}
+  .tick.recalled{color:var(--warn)}
+  #bcFileChip{display:inline-flex;align-items:center;gap:8px}
   .pairbox{margin-top:16px;padding:12px 14px;border:1px dashed var(--line);border-radius:10px;background:var(--sunk)}
   .paircode{font-family:var(--mono);font-size:34px;font-weight:700;letter-spacing:.14em;text-align:center;
     padding:16px 10px;border-radius:12px;background:var(--accent-soft);color:var(--ink);user-select:all}
@@ -149,7 +155,7 @@
   .bcrow{display:flex;gap:10px;align-items:center;padding:7px 10px;border-bottom:1px solid var(--line2);cursor:pointer;font-size:13px}
   .bcrow:last-child{border-bottom:0}
   .bcrow:hover{background:var(--line2)}
-  .bcrow .nm{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .bcrow .nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .cols2{display:grid;grid-template-columns:1fr 1fr;gap:14px;align-items:start}
   .scroll{overflow-x:auto}
   table{border-collapse:collapse;width:100%;font-size:12.5px}
@@ -208,6 +214,12 @@
      The desktop layout above is untouched; everything here applies only on
      narrow screens, which is how the app runs when installed on an iPhone. */
   nav button i, nav button .sm{display:none}
+  #build{margin-left:12px;font-size:11px;color:var(--faint);font-family:var(--mono);
+    white-space:normal;overflow-wrap:anywhere}
+  @media (max-width:760px){
+    .brand{flex-wrap:wrap}
+    #build{flex:1 1 100%;margin:4px 0 0;font-size:12px;line-height:1.45}
+  }
   #signout{margin-left:14px;font-size:12px;font-weight:500;color:var(--faint);text-decoration:none}
   #signout:hover{color:var(--ink)}
   @media (max-width:760px){
@@ -216,11 +228,28 @@
        shorter than the screen -- visible on C3/Matches with no data. As the
        last row of the column it is pinned by layout instead. overflow-x:hidden
        on body is also a known iOS fixed-position breaker, so it is gone. */
+    /* MEASURED on an installed iPhone app: the window is 964px tall while
+       window.innerHeight, 100dvh and height:100% all report 874 -- iOS leaves
+       out the status bar and home-indicator areas. Anything sized from those
+       units is exactly 90px short, which is what put a dead band under the tab
+       bar. inset:0 resolves against the real window, so it is always exact. */
     html{height:100%}
-    /* A FIXED height, not a minimum: with min-height the page grew with long
-       content and the tab bar scrolled away with it. Only main scrolls. */
-    body{max-width:100%;-webkit-tap-highlight-color:transparent;
-      height:100vh;height:100dvh;overflow:hidden;display:flex;flex-direction:column}
+    body{position:fixed;inset:0;max-width:100%;-webkit-tap-highlight-color:transparent;
+      overflow:hidden;display:flex;flex-direction:column}
+    /* iOS enlarges text it thinks is in a wide column ("text autosizing").
+       In the installed app it inflated everything until the content no longer
+       fitted and was clipped at the right edge. Held at 100% everywhere. */
+    body,body *{-webkit-text-size-adjust:100%;text-size-adjust:100%}
+    /* Flex and grid children refuse to shrink below their content by default,
+       which is what turns any long word or wide field into clipped text. */
+    main,section,.card,.cols2,.cols3,.bar,.ctl,.bcbar,.phonectl,.upd,.bcrow,.updtop,.wab{min-width:0}
+    /* Anything inside a card must be able to shrink to the card's width: a
+       single unshrinkable child (a long chat name, a wide field) widened the
+       card past the screen and the text was clipped. */
+    .card *{min-width:0;max-width:100%}
+    .updtop .who,.bcrow .nm{min-width:0;overflow:hidden;text-overflow:ellipsis}
+    .bcbar>input,.bcbar>select{min-width:0}
+    pre,.sub,.nm,h2,h3{overflow-wrap:anywhere}
     header{flex:0 0 auto;padding:calc(8px + env(safe-area-inset-top)) 14px 8px}
     main{flex:1 1 auto;min-height:0;overflow-y:auto;-webkit-overflow-scrolling:touch;overscroll-behavior:contain}
     /* Date pickers and actions scroll with the content instead of taking up a
@@ -267,7 +296,18 @@
     nav button[aria-selected="true"]{background:none;box-shadow:none;color:var(--accent)}
     nav button[aria-selected="true"] i{filter:none;opacity:1}
     main{padding:14px 12px 20px}
-    .bar{margin-bottom:10px}
+    /* Explanations read as prose, not as data: the monospace face at phone
+       size is cramped and hard to scan. Times, rates and message bodies keep
+       the monospace face, because alignment carries meaning there. */
+    .sub{font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",Roboto,sans-serif;
+      font-size:13px;line-height:1.5}
+    .updtop .t,.updtop .who,pre.body,pre.rundown,table,.paircode{font-family:var(--mono)}
+    .updtop .t{font-size:12.5px}
+    .card h3{padding:12px 16px}
+    .card>div{padding-left:16px;padding-right:16px}
+    .upd{padding:12px 16px}
+    .bar{margin-bottom:12px;gap:6px}
+    .bar h2{width:100%}
     .bar h2{font-size:19px}
     .card h3{font-size:14px}
     .cols2,.cols3{gap:12px}
@@ -287,7 +327,7 @@
 <body>
 
 <header>
-  <div class="brand">Arrow Cape <span>· monitor</span><span id="brandLive" hidden class="livedot" title="Live — capturing WhatsApp"></span><a id="signout" href="/api/logout" hidden>Sign out</a></div>
+  <div class="brand">Arrow Cape <span>· monitor</span><span id="brandLive" hidden class="livedot" title="Live — capturing WhatsApp"></span><span id="build" hidden></span><a id="signout" href="/api/logout" hidden>Sign out</a></div>
   <nav role="tablist">
     <button role="tab" id="tab-c5" aria-selected="true" aria-label="C5 Accounts"><i aria-hidden="true">📊</i><span class="lg">C5 Accounts</span><span class="sm">C5</span></button>
     <button role="tab" id="tab-c3" aria-selected="false" aria-label="C3 Cargo and Tonnage"><i aria-hidden="true">🚢</i><span class="lg">C3 Cargo &amp; Tonnage</span><span class="sm">C3</span></button>
@@ -432,9 +472,11 @@
           Only your own new messages count: other members' messages and edits are ignored.
         </p>
         <div class="bcbar" style="flex-wrap:wrap">
-          <select id="rlGroup" style="flex:1;min-width:220px"><option value="">— choose a group —</option></select>
+          <select id="rlGroup" style="flex:1;min-width:190px"><option value="">— choose a group —</option></select>
+          <span class="sub">sends to</span>
+          <select id="rlList" style="min-width:130px"></select>
           <label class="sub" style="white-space:nowrap;display:flex;align-items:center;gap:8px"><input type="checkbox" id="rlOn" role="switch"> On</label>
-          <span class="sub" id="rlState"></span>
+          <span class="sub" id="rlState" style="flex:1 1 100%"></span>
         </div>
       </div>
     </div>
@@ -442,9 +484,15 @@
       <div class="card">
         <h3>Message</h3>
         <div style="padding:14px 16px">
-          <textarea id="bcText" rows="9" placeholder="Type the message to send to every tagged chat…"></textarea>
-          <div class="bcbar">
-            <button class="btn" id="bcSend" disabled>Send to tagged chats</button>
+          <textarea id="bcText" rows="8" placeholder="Type the message to send to every chat in the list…"></textarea>
+          <div class="bcbar" style="flex-wrap:wrap">
+            <label class="btn" for="bcFile" style="cursor:pointer">📎 Attach image or file</label>
+            <input type="file" id="bcFile" accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.csv,.txt" hidden>
+            <span class="sub" id="bcFileChip" hidden></span>
+          </div>
+          <div class="bcbar" style="flex-wrap:wrap">
+            <button class="btn primary" id="bcSend" disabled>Send to list</button>
+            <button class="btn" id="bcRecall" hidden title="Delete the last broadcast for everyone">↩︎ Recall last broadcast</button>
             <span class="sub" id="bcCount"></span>
           </div>
           <p class="sub" style="margin:10px 0 0;line-height:1.55">
@@ -455,8 +503,14 @@
         </div>
       </div>
       <div class="card">
-        <h3>Tagged chats <span class="pill" id="bcTagged">0</span></h3>
+        <h3>Lists <span class="pill" id="bcTagged">0</span></h3>
         <div style="padding:14px 16px">
+          <div class="bcbar" style="margin:0 0 10px;flex-wrap:wrap">
+            <select id="bcListSel" style="flex:1;min-width:150px"></select>
+            <button class="btn" id="bcNewList" title="Create a list">+ New</button>
+            <button class="btn" id="bcRenameList" title="Rename this list">Rename</button>
+            <button class="btn" id="bcDelList" title="Delete this list">Delete</button>
+          </div>
           <div class="bcbar" style="margin:0 0 8px">
             <input id="bcSearch" placeholder="Search chats…" autocomplete="off" style="flex:1">
             <label class="sub" style="white-space:nowrap"><input type="checkbox" id="bcOnly"> tagged only</label>
@@ -481,7 +535,24 @@
 // sign-in page instead of showing empty panels. No-op when sign-in is off.
 { const f = window.fetch.bind(window);
   window.fetch = async (...a) => { const r = await f(...a); if (r.status === 401) location.href = "/login"; return r; }; }
-fetch("/api/session").then(r=>r.json()).then(d=>{ if(d.auth) document.getElementById("signout").hidden=false; }).catch(()=>{});
+fetch("/api/session").then(r=>r.json()).then(d=>{
+  if(d.auth) document.getElementById("signout").hidden=false;
+  const b=document.getElementById("build");
+  if(b&&d.build){
+    // The phone's own numbers, on screen: guessing from screenshots has cost
+    // several rounds. win = what the browser thinks the window is, body = what
+    // the layout actually fills, card = the widest thing being drawn.
+    const show=()=>{
+      const card=[...document.querySelectorAll("main .card")].map(e=>Math.round(e.getBoundingClientRect().width)).sort((x,y)=>y-x)[0]||0;
+      const nav=document.querySelector("nav").getBoundingClientRect();
+      const probe=document.createElement("div");
+      probe.style.cssText="position:fixed;left:0;bottom:0;width:1px;height:env(safe-area-inset-bottom)";
+      document.body.appendChild(probe); const safeB=Math.round(probe.getBoundingClientRect().height); probe.remove();
+      b.textContent=`${d.build} · win ${innerWidth}x${innerHeight} · screen ${screen.width}x${screen.height} · body ${Math.round(document.body.getBoundingClientRect().width)} · card ${card} · bar ${Math.round(nav.top)}-${Math.round(nav.bottom)} · safeB ${safeB}`;
+    };
+    show(); setInterval(show,1000); b.hidden=false;
+  }
+}).catch(()=>{});
 const $ = (s) => document.querySelector(s);
 const ACCTS = ["RIO","FMG","BHP"];
 let c5 = null, c3 = null, view = "c5";
@@ -587,17 +658,105 @@ $("#tab-bc").onclick=()=>show("bc");
 // a refresh and a redeploy. Chat names come from WhatsApp and are only ever
 // inserted as text.
 let bcChats=[], bcTags=new Map(), bcTimer=null, bcSaveTimer=null;
+let bcLists=[], bcListId="", bcMedia=null;
+
+// Lists are saved whole -- small data, and it avoids the client and server
+// disagreeing about partial updates.
+async function saveLists(){
+  const l=bcLists.find(x=>x.id===bcListId);
+  if(l) l.chats=[...bcTags.values()];
+  try{
+    const r=await (await fetch("/api/broadcast/lists",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({lists:bcLists})})).json();
+    bcLists=r.lists||bcLists;
+  }catch{ toast("Could not save the list"); }
+}
+const currentList=()=>bcLists.find(l=>l.id===bcListId)||bcLists[0];
+function renderListPickers(){
+  const sel=$("#bcListSel"), rl=$("#rlList");
+  if(sel){ sel.innerHTML=""; for(const l of bcLists){ const o=el("option",null,`${l.name} (${l.chats.length})`); o.value=l.id; sel.appendChild(o); } sel.value=bcListId; }
+  if(rl){ rl.innerHTML=""; for(const l of bcLists){ const o=el("option",null,l.name); o.value=l.id; rl.appendChild(o); }
+    rl.value=(rlCfg&&rlCfg.listId)||bcListId; }
+}
+function switchList(id){
+  bcListId=id;
+  const l=currentList();
+  bcTags=new Map((l?l.chats:[]).map(c=>[c.id,c]));
+  renderBcList(); bcRefresh();
+}
+
 async function loadBroadcast(){
   try{
-    const d=await (await fetch("/api/broadcast/chats")).json();
+    const [d,ls]=await Promise.all([
+      (await fetch("/api/broadcast/chats")).json(),
+      (await fetch("/api/broadcast/lists")).json(),
+    ]);
     bcChats=d.chats||[];
-    bcTags=new Map((d.tagged||[]).map(t=>[t.id,t]));
+    bcLists=(ls.lists&&ls.lists.length)?ls.lists:[{id:"main",name:"Main list",chats:[]}];
+    if(!bcLists.some(l=>l.id===bcListId)) bcListId=bcLists[0].id;
+    bcTags=new Map((currentList()?currentList().chats:[]).map(c=>[c.id,c]));
     $("#bcMeta").textContent = d.connected
       ? `${bcChats.length} chats · ${bcChats.filter(c=>c.isGroup).length} groups`
       : "WhatsApp not connected — showing your saved tags only. Connect to tag more chats and send.";
   }catch(e){ $("#bcMeta").textContent="Could not load chats: "+e.message; }
-  renderBcList(); bcRefresh(); pollBroadcast(); loadRelayCfg();
+  renderBcList(); bcRefresh(); renderListPickers(); pollBroadcast(); loadRelayCfg();
 }
+
+$("#bcListSel").onchange=()=>switchList($("#bcListSel").value);
+$("#bcNewList").onclick=async()=>{
+  const name=(prompt("Name this list (e.g. Owners, Charterers, Team)")||"").trim();
+  if(!name) return;
+  const id="l"+Date.now().toString(36);
+  bcLists.push({id,name,chats:[]});
+  bcListId=id; bcTags=new Map();
+  await saveLists(); switchList(id); renderListPickers(); toast(`List “${name}” created`);
+};
+$("#bcRenameList").onclick=async()=>{
+  const l=currentList(); if(!l) return;
+  const name=(prompt("Rename this list", l.name)||"").trim();
+  if(!name) return;
+  l.name=name; await saveLists(); renderListPickers(); toast("Renamed");
+};
+$("#bcDelList").onclick=async()=>{
+  const l=currentList(); if(!l) return;
+  if(bcLists.length<2){ toast("Keep at least one list"); return; }
+  if(!confirm(`Delete the list “${l.name}” with its ${l.chats.length} chat(s)?\n\nThe chats themselves are not touched.`)) return;
+  bcLists=bcLists.filter(x=>x.id!==l.id);
+  await saveLists(); switchList(bcLists[0].id); renderListPickers(); toast("List deleted");
+};
+
+// Uploaded the moment it is chosen, so pressing Send is instant.
+$("#bcFile").onchange=async(e)=>{
+  const f=e.target.files&&e.target.files[0];
+  e.target.value="";
+  if(!f) return;
+  const chip=$("#bcFileChip");
+  chip.hidden=false; chip.textContent=`uploading ${f.name}…`;
+  try{
+    const r=await fetch(`/api/broadcast/upload?name=${encodeURIComponent(f.name)}&type=${encodeURIComponent(f.type||"")}`,{method:"POST",body:f});
+    const d=await r.json();
+    if(!r.ok){ chip.hidden=true; bcMedia=null; toast(d.error||"Upload failed"); bcRefresh(); return; }
+    bcMedia=d;
+    chip.innerHTML="";
+    chip.append(el("span",null,`${d.isImage?"🖼":"📄"} ${d.name} · ${Math.max(1,Math.round(d.size/1024))} KB`));
+    const x=el("button","btn","remove"); x.style.cssText="padding:2px 8px;min-height:0";
+    x.onclick=()=>{ bcMedia=null; chip.hidden=true; bcRefresh(); };
+    chip.append(x);
+  }catch{ chip.hidden=true; bcMedia=null; toast("Upload failed"); }
+  bcRefresh();
+};
+
+$("#bcRecall").onclick=async(e)=>{
+  if(!confirm("Delete the last broadcast for everyone?\n\nWhatsApp only allows this for about two days, and anyone who already read it has seen it. Each chat will show “This message was deleted”.")) return;
+  e.target.disabled=true;
+  try{
+    const r=await fetch("/api/broadcast/recall",{method:"POST"});
+    const d=await r.json();
+    if(!r.ok){ toast(d.error||"Could not recall"); return; }
+    renderBcProgress(d);
+    toast(`Recalled ${d.recalledCount||0} message(s)`);
+  } finally { e.target.disabled=false; pollBroadcast(); }
+};
 let rlCfg={enabled:false,sourceId:"",sourceName:""};
 async function loadRelayCfg(){
   try{ rlCfg=await (await fetch("/api/broadcast/relay")).json(); }catch{ /* keep last */ }
@@ -611,22 +770,26 @@ async function loadRelayCfg(){
   sel.value=rlCfg.sourceId||"";
   $("#rlOn").checked=Boolean(rlCfg.enabled);
   $("#rlOn").disabled=!rlCfg.sourceId;
-  $("#rlState").textContent = rlCfg.enabled ? `On — messages you send in “${rlCfg.sourceName}” are broadcast`
+  renderListPickers();
+  const rlName=(bcLists.find(l=>l.id===rlCfg.listId)||{}).name||(currentList()||{}).name||"the list";
+  $("#rlState").textContent = rlCfg.enabled ? `On — what you send in “${rlCfg.sourceName}” goes to “${rlName}”`
     : rlCfg.sourceId ? "Off" : "";
   renderBcList();
 }
 async function saveRelayCfg(){
   const sel=$("#rlGroup"), id=sel.value, name=id? sel.options[sel.selectedIndex].textContent : "";
   const enabled = Boolean(id) && $("#rlOn").checked;
+  const listId = ($("#rlList") && $("#rlList").value) || bcListId;
   try{
     rlCfg=await (await fetch("/api/broadcast/relay",{method:"POST",headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({sourceId:id,sourceName:name,enabled})})).json();
+      body:JSON.stringify({sourceId:id,sourceName:name,enabled,listId})})).json();
     toast(rlCfg.enabled?`Broadcast group on: ${rlCfg.sourceName}`:"Broadcast group off");
   }catch{ toast("Could not save"); }
   loadRelayCfg();
 }
 $("#rlGroup").onchange=()=>{ if($("#rlGroup").value) $("#rlOn").checked=true; saveRelayCfg(); };
 $("#rlOn").onchange=saveRelayCfg;
+if($("#rlList")) $("#rlList").onchange=saveRelayCfg;
 function renderBcList(){
   const q=$("#bcSearch").value.trim().toLowerCase(), only=$("#bcOnly").checked;
   const host=$("#bcList"); host.innerHTML="";
@@ -646,25 +809,31 @@ function renderBcList(){
 }
 function saveBcTags(){
   clearTimeout(bcSaveTimer);
-  bcSaveTimer=setTimeout(()=>fetch("/api/broadcast/tags",{method:"POST",headers:{"Content-Type":"application/json"},
-    body:JSON.stringify({tags:[...bcTags.values()]})}).catch(()=>toast("Could not save tags")),250);
+  bcSaveTimer=setTimeout(saveLists,250);
 }
 let bcRunning=false;
 function bcRefresh(){
-  const n=bcTags.size;
+  const n=bcTags.size, l=currentList();
   $("#bcTagged").textContent=String(n);
-  $("#bcCount").textContent = n ? `${n} chat${n===1?"":"s"} tagged` : "tick chats in the list";
-  $("#bcSend").disabled = bcRunning || !n;
+  $("#bcCount").textContent = n ? `${n} chat${n===1?"":"s"} in “${l?l.name:""}”` : "tick chats below";
+  // An attachment on its own is a valid broadcast: the text becomes its caption.
+  const hasContent = Boolean($("#bcText").value.trim()) || Boolean(bcMedia);
+  $("#bcSend").disabled = bcRunning || !n || !hasContent;
+  renderListPickers();
 }
+$("#bcText").oninput=bcRefresh;
 $("#bcSearch").oninput=renderBcList;
 $("#bcOnly").onchange=renderBcList;
 $("#bcSend").onclick=async()=>{
   const text=$("#bcText").value.trim();
-  if(!text){ toast("Type a message first"); return; }
+  if(!text && !bcMedia){ toast("Type a message or attach a file"); return; }
   const n=bcTags.size; if(!n) return;
-  if(!confirm(`Send this message to ${n} chat${n===1?"":"s"}?\n\n${text.slice(0,300)}`)) return;
+  const l=currentList();
+  const what=bcMedia ? `${bcMedia.name}${text?"\n\n"+text.slice(0,200):""}` : text.slice(0,300);
+  if(!confirm(`Send to ${n} chat${n===1?"":"s"} in “${l?l.name:""}”?\n\n${what}`)) return;
   $("#bcSend").disabled=true;
-  const r=await fetch("/api/broadcast/send",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({text})});
+  const r=await fetch("/api/broadcast/send",{method:"POST",headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({text,listId:bcListId,mediaId:bcMedia?bcMedia.mediaId:""})});
   const d=await r.json().catch(()=>({error:"bad response"}));
   if(!r.ok||d.error){ toast("Not sent: "+(d.error||r.status)); bcRefresh(); return; }
   pollBroadcast();
@@ -677,9 +846,22 @@ function renderBcProgress(st){
     : `${st.dryRun?"Dry run: ":""}${st.sent} sent${st.failed?`, ${st.failed} failed`:""} · ${new Date(st.finishedAt||st.startedAt).toLocaleTimeString()}`);
   host.appendChild(head);
   for(const r of st.results){
-    const mark = r.state==="sent"?"✓":r.state==="failed"?"✗":r.state==="sending"?"…":"·";
-    const li=el("li",null,`${mark} ${r.name}${r.error?` — ${r.error}`:""}`);
-    if(r.state==="failed") li.style.color="var(--bad, #c0392b)";
+    const li=el("li");
+    // WhatsApp's own states: one tick sent, two delivered, two blue read.
+    let tick="·", cls="";
+    if(r.state==="recalled"){ tick="↩︎"; cls="recalled"; }
+    else if(r.state==="failed"){ tick="✗"; cls="failed"; }
+    else if(r.state==="sending"){ tick="…"; }
+    else if(r.state==="sent"){
+      const a=r.ack||1;
+      tick = a>=3?"✓✓":a>=2?"✓✓":"✓";
+      cls = a>=3?"read":a>=2?"delivered":"";
+    }
+    const t=el("span","tick "+cls,tick);
+    li.append(t," ",el("span",null,r.name));
+    if(r.state==="sent"&&r.ackLabel) li.append(el("span","sub"," · "+r.ackLabel));
+    if(r.error) li.append(el("span","sub"," — "+r.error));
+    if(r.recallError) li.append(el("span","sub"," — not deleted: "+r.recallError));
     host.appendChild(li);
   }
 }
@@ -689,6 +871,9 @@ async function pollBroadcast(){
     const st=await (await fetch("/api/broadcast/status")).json();
     bcRunning=Boolean(st.running);
     renderBcProgress(st); bcRefresh();
+    // Recall only makes sense while something is still out there.
+    const recallable=(st.results||[]).some(r=>r.state==="sent"&&r.messageId);
+    $("#bcRecall").hidden = st.running || !recallable || st.dryRun;
     if(st.running) bcTimer=setTimeout(pollBroadcast,1000);
   }catch{ bcTimer=setTimeout(pollBroadcast,3000); }
 }

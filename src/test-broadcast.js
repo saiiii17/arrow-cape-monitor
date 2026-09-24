@@ -20,13 +20,16 @@ const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "bc-test-"));
 process.env.BROADCAST_FILE = path.join(tmp, "tags.json");
 process.env.BROADCAST_MAX = "3";
 process.env.RELAY_FILE = path.join(tmp, "relay.json");
+process.env.LISTS_FILE = path.join(tmp, "lists.json");
+process.env.UPLOAD_DIR = path.join(tmp, "uploads");
+process.env.LAST_BROADCAST_FILE = path.join(tmp, "last-broadcast.json");
 const live = require("./live");
 const waitDone = async () => { for (let i = 0; i < 200 && live.broadcastStatus().running; i++) await new Promise((r) => setTimeout(r, 10)); };
 
 (async () => {
   console.log("\nbroadcast");
 
-  await test("refuses when nothing is tagged", () => rejects(live.broadcast("hi", { dryRun: true }), /No chats tagged/));
+  await test("refuses when the list is empty", () => rejects(live.broadcast("hi", { dryRun: true }), /No chats in/));
 
   await test("tags are saved by id, de-duplicated, and groups recognised", () => {
     const saved = live.saveTags([
@@ -117,6 +120,126 @@ const waitDone = async () => { for (let i = 0; i < 200 && live.broadcastStatus()
     for (let i = 0; i < 100 && live.broadcastStatus().text !== "second"; i++) await new Promise((r) => setTimeout(r, 10));
     await waitDone();
     assert.strictEqual(live.broadcastStatus().text, "second", "the queued message went out after the first");
+  });
+
+  console.log("\nsaved lists");
+
+  await test("the old single list is migrated, never lost", () => {
+    const lists = live.loadLists();
+    assert.ok(lists.length >= 1);
+    assert.ok(lists[0].chats.length, "the chats tagged before lists existed are still there");
+  });
+
+  await test("lists are kept apart, and a chat can sit in both", () => {
+    const owners = { id: "own@g.us", name: "Owners" };
+    const shared = { id: "both@g.us", name: "Shared" };
+    live.saveLists([
+      { id: "main", name: "Main list", chats: [shared] },
+      { id: "l2", name: "Owners", chats: [owners, shared] },
+    ]);
+    const after = live.loadLists();
+    assert.deepStrictEqual(after.map((l) => l.name), ["Main list", "Owners"]);
+    assert.strictEqual(after[1].chats.length, 2);
+    assert.strictEqual(live.getList("l2").name, "Owners");
+  });
+
+  await test("an unknown list id falls back to the first, it never sends nowhere", () =>
+    assert.strictEqual(live.getList("does-not-exist").id, "main"));
+
+  await test("a broadcast goes to the list it was asked for", async () => {
+    const st = await live.broadcast("owners only", { dryRun: true, listId: "l2" });
+    assert.strictEqual(st.listName, "Owners");
+    assert.strictEqual(st.total, 2);
+    await waitDone();
+    assert.deepStrictEqual(live.broadcastStatus().results.map((r) => r.name), ["Owners", "Shared"]);
+  });
+
+  await test("deleting every list is refused — there is always one to send to", () => {
+    live.saveLists([]);
+    assert.ok(live.loadLists().length >= 1);
+    live.saveLists([{ id: "main", name: "Main list", chats: [{ id: "a@g.us", name: "A" }, { id: "b@g.us", name: "B" }] }]);
+  });
+
+  console.log("\nattachments");
+
+  await test("an image is stored and reported as an image", () => {
+    const up = live.saveUpload(Buffer.from("89504e470d0a1a0a", "hex"), { name: "C5 chart.png", type: "image/png" });
+    assert.strictEqual(up.isImage, true);
+    assert.strictEqual(up.name, "C5 chart.png");
+    assert.ok(up.mediaId.endsWith(".png"));
+  });
+
+  await test("an empty file is refused", () =>
+    assert.throws(() => live.saveUpload(Buffer.alloc(0), { name: "x.png" }), /Empty/));
+
+  await test("a file past the size cap is refused", () =>
+    assert.throws(() => live.saveUpload(Buffer.alloc(17 * 1024 * 1024), { name: "big.png", type: "image/png" }), /the limit is/));
+
+  await test("a stale or made-up attachment id is refused, not sent as nothing", () =>
+    rejects(live.broadcast("see chart", { dryRun: true, mediaId: "../../etc/passwd" }), /no longer available/));
+
+  await test("an attachment alone, with no text, is a valid broadcast", async () => {
+    const up = live.saveUpload(Buffer.from("x"), { name: "note.pdf", type: "application/pdf" });
+    const st = await live.broadcast("", { dryRun: true, mediaId: up.mediaId });
+    assert.strictEqual(st.mediaId, up.mediaId);
+    await waitDone();
+  });
+
+  console.log("\nrecall");
+
+  await test("recalling a dry run refuses — nothing real was ever sent", () =>
+    rejects(live.recallBroadcast({ dryRun: true }), /Nothing left to recall/));
+
+  // Recall is meant to survive a server restart, so this runs it the way it
+  // really happens: a fresh process reading the last broadcast back off disk.
+  await test("after a restart the last broadcast can still be recalled, once", () => {
+    const lastFile = path.join(tmp, "last-broadcast.json");
+    fs.writeFileSync(lastFile, JSON.stringify({
+      id: 1, dryRun: false, origin: "app", text: "sent before the restart",
+      listName: "Main list", total: 2, done: 2, sent: 2, failed: 0,
+      results: [
+        { id: "a@g.us", name: "A", state: "sent", messageId: "false_a" },
+        { id: "b@g.us", name: "B", state: "sent", messageId: "false_b" },
+      ],
+    }));
+    const child = `const l=require(${JSON.stringify(path.join(__dirname, "live.js"))});(async()=>{
+      const a=await l.recallBroadcast({dryRun:true});
+      let second="";
+      try{ await l.recallBroadcast({dryRun:true}); }catch(e){ second=e.message; }
+      console.log(JSON.stringify({states:a.results.map(r=>r.state),count:a.recalledCount,second}));
+      process.exit(0);})()`;
+    const out = require("child_process").execFileSync(process.execPath, ["-e", child], {
+      env: { ...process.env, LAST_BROADCAST_FILE: lastFile }, encoding: "utf8",
+    });
+    const d = JSON.parse(out.trim().split("\n").pop());
+    assert.deepStrictEqual(d.states, ["recalled", "recalled"], "every chat shows as recalled");
+    assert.strictEqual(d.count, 2);
+    assert.match(d.second, /already deleted/, "a second recall finds nothing left");
+    // A dry run must leave the saved record alone, or a rehearsal would make
+    // the real Recall button think the work was already done.
+    assert.doesNotMatch(fs.readFileSync(lastFile, "utf8"), /recalled/, "a dry run does not touch the saved record");
+  });
+
+  console.log("\ncaps and pacing");
+
+  await test("a list longer than the cap is refused before a single message goes out", async () => {
+    live.saveLists([{ id: "main", name: "Main list", chats:
+      [1, 2, 3, 4].map((i) => ({ id: `cap${i}@g.us`, name: "Cap " + i })) }]);
+    await rejects(live.broadcast("too many", { dryRun: true }), /the limit is 3/);
+  });
+
+  await test("chats are sent one at a time, with a gap between them", async () => {
+    live.saveLists([{ id: "main", name: "Main list", chats:
+      [1, 2, 3].map((i) => ({ id: `p${i}@g.us`, name: "P" + i })) }]);
+    const t0 = Date.now();
+    await live.broadcast("paced", { dryRun: true });
+    const seen = [];
+    while (live.broadcastStatus().running) {
+      seen.push(live.broadcastStatus().results.filter((r) => r.state === "sending").length);
+      await new Promise((r) => setTimeout(r, 5));
+    }
+    assert.ok(Math.max(...seen, 0) <= 1, "never two in flight at once");
+    assert.ok(Date.now() - t0 >= 20, "there is a pause between chats");
   });
 
   try { fs.rmSync(tmp, { recursive: true, force: true }); } catch { /* ignore */ }

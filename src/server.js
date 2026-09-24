@@ -73,7 +73,17 @@ const server = http.createServer(async (req, res) => {
     res.writeHead(302, { Location: "/login" }).end();
     return;
   }
-  if (url.pathname === "/api/session") return json(res, 200, { auth: auth.enabled() });
+  if (url.pathname === "/api/session") {
+    // Build stamp = when the page file was last written. Shown in the header so
+    // "did my phone actually get the new version?" is answerable at a glance
+    // instead of by guesswork.
+    let build = "?";
+    try {
+      const t = new Date(fs.statSync(path.join(PUBLIC_DIR, "index.html")).mtime);
+      build = `${String(t.getDate()).padStart(2, "0")}/${String(t.getMonth() + 1).padStart(2, "0")} ${String(t.getHours()).padStart(2, "0")}:${String(t.getMinutes()).padStart(2, "0")}`;
+    } catch { /* leave as ? */ }
+    return json(res, 200, { auth: auth.enabled(), build });
+  }
 
   if (url.pathname === "/api/dates") {
     return json(res, 200, { dates: datesAvailable() });
@@ -341,14 +351,47 @@ const server = http.createServer(async (req, res) => {
       return json(res, 200, { connected: false, reason: e.message, chats: tagged, tagged });
     }
   }
+  if (url.pathname === "/api/broadcast/lists") {
+    if (req.method === "POST") {
+      const { lists } = await readBody(req);
+      return json(res, 200, { lists: live.saveLists(lists) });
+    }
+    return json(res, 200, { lists: live.loadLists() });
+  }
   if (url.pathname === "/api/broadcast/tags" && req.method === "POST") {
     const { tags } = await readBody(req);
     return json(res, 200, { tagged: live.saveTags(tags) });
   }
-  if (url.pathname === "/api/broadcast/send" && req.method === "POST") {
-    const { text, dryRun } = await readBody(req);
+  // Raw bytes, not multipart: one file at a time, and the name and type come
+  // from the query, which keeps the server free of a form-parsing dependency.
+  if (url.pathname === "/api/broadcast/upload" && req.method === "POST") {
     try {
-      return json(res, 200, await live.broadcast(text, { dryRun: Boolean(dryRun) }));
+      const chunks = [];
+      let size = 0;
+      for await (const chunk of req) {
+        size += chunk.length;
+        if (size > 32 * 1024 * 1024) throw new Error("That file is too large");
+        chunks.push(chunk);
+      }
+      return json(res, 200, live.saveUpload(Buffer.concat(chunks), {
+        name: url.searchParams.get("name") || "file",
+        type: url.searchParams.get("type") || req.headers["content-type"] || "",
+      }));
+    } catch (e) {
+      return json(res, 400, { error: e.message });
+    }
+  }
+  if (url.pathname === "/api/broadcast/recall" && req.method === "POST") {
+    try {
+      return json(res, 200, await live.recallBroadcast({}));
+    } catch (e) {
+      return json(res, 400, { error: e.message });
+    }
+  }
+  if (url.pathname === "/api/broadcast/send" && req.method === "POST") {
+    const { text, dryRun, listId, mediaId } = await readBody(req);
+    try {
+      return json(res, 200, await live.broadcast(text, { dryRun: Boolean(dryRun), listId: listId || "", mediaId: mediaId || "" }));
     } catch (e) {
       return json(res, 400, { error: e.message });
     }
@@ -361,6 +404,8 @@ const server = http.createServer(async (req, res) => {
     return json(res, 200, live.loadRelay());
   }
   if (url.pathname === "/api/broadcast/status") {
+    // Refresh the delivery ticks as the UI polls, throttled inside live.js.
+    await live.refreshAcks().catch(() => {});
     return json(res, 200, live.broadcastStatus());
   }
 
