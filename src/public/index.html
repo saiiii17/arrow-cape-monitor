@@ -226,6 +226,13 @@
     border-radius:10px;padding:10px 12px;font-size:13px;line-height:1.5;white-space:pre-wrap;
     overflow-wrap:anywhere;margin:0 0 14px}
   .sheet .peek .att{display:block;color:var(--dim);font-size:12.5px;margin-bottom:6px}
+  /* Who is actually in the list, without hunting through a thousand rows. */
+  .members{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:0 0 10px;padding:10px 12px;
+    background:var(--sunk);border:1px solid var(--line2);border-radius:10px;max-height:132px;overflow:auto}
+  .members .none{color:var(--faint);font-size:12.5px}
+  .members .hd{flex:1 1 100%;font-size:11.5px;text-transform:uppercase;letter-spacing:.04em;
+    color:var(--faint);font-weight:600;margin-bottom:2px}
+  #bcDirty.unsaved{color:var(--warn);font-weight:600}
   #bcFileChip{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
   .chip{display:inline-flex;align-items:center;gap:6px;background:var(--sunk);border:1px solid var(--line);
     border-radius:999px;padding:3px 6px 3px 10px;font-size:12.5px;max-width:100%}
@@ -558,6 +565,11 @@
             <button class="btn" id="bcRenameList" title="Rename this list">Rename</button>
             <button class="btn" id="bcDelList" title="Delete this list">Delete</button>
           </div>
+          <div class="bcbar" style="margin:0 0 10px;flex-wrap:wrap">
+            <button class="btn primary" id="bcSaveList" disabled>Save list</button>
+            <span class="sub" id="bcDirty">Saved</span>
+          </div>
+          <div id="bcMembers" class="members"></div>
           <div class="bcbar" style="margin:0 0 8px">
             <input id="bcSearch" placeholder="Search chats…" autocomplete="off" style="flex:1">
             <label class="sub" style="white-space:nowrap"><input type="checkbox" id="bcOnly"> tagged only</label>
@@ -757,17 +769,59 @@ let bcLists=[], bcListId="", bcMediaList=[];
 // list's chats -- and switching to an empty list emptied the one you left.
 let bcTagsListId="";
 
+let bcDirty=false;
+function markDirty(on){
+  bcDirty=Boolean(on);
+  const b=$("#bcSaveList"), d=$("#bcDirty");
+  if(b) b.disabled=!bcDirty;
+  if(d){
+    d.textContent = bcDirty ? "Unsaved changes" : "Saved";
+    d.classList.toggle("unsaved", bcDirty);
+  }
+}
+
 // Lists are saved whole -- small data, and it avoids the client and server
-// disagreeing about partial updates.
-async function saveLists(){
-  // Only ever write the ticks back to the list they were read from.
+// disagreeing about partial updates. Saving is explicit: a background save
+// queued against one list could land after the list had been switched, which
+// is how a list quietly emptied itself.
+async function saveLists({ quiet=false } = {}){
   const l=bcLists.find(x=>x.id===bcTagsListId);
   if(l) l.chats=[...bcTags.values()];
   try{
     const r=await (await fetch("/api/broadcast/lists",{method:"POST",headers:{"Content-Type":"application/json"},
       body:JSON.stringify({lists:bcLists})})).json();
     bcLists=r.lists||bcLists;
-  }catch{ toast("Could not save the list"); }
+    // The server is the last word on what a list holds; take the ticks back
+    // from it so the screen can never disagree with what was stored.
+    const mine=bcLists.find(x=>x.id===bcTagsListId);
+    if(mine) bcTags=new Map(mine.chats.map(c=>[c.id,c]));
+    markDirty(false);
+    if(!quiet) toast(`Saved — ${(mine?mine.chats.length:0)} chat(s) in “${mine?mine.name:""}”`);
+    renderMembers(); renderBcList(); renderListPickers(); bcRefresh();
+    return true;
+  }catch{ toast("Could not save the list — nothing was changed"); return false; }
+}
+
+function renderMembers(){
+  const host=$("#bcMembers"); if(!host) return;
+  host.innerHTML="";
+  const l=currentList();
+  const rows=[...bcTags.values()];
+  host.append(el("span","hd", rows.length
+    ? `In “${l?l.name:""}” — ${rows.length} chat${rows.length===1?"":"s"}`
+    : `“${l?l.name:""}” is empty`));
+  if(!rows.length){
+    host.append(el("span","none","Tick chats below to add them, then press Save list."));
+    return;
+  }
+  for(const c of rows){
+    const chip=el("span","chip");
+    chip.append(el("span","nm",(c.isGroup?"👥 ":"")+c.name));
+    const x=el("button",null,"×");
+    x.title=`Remove ${c.name}`; x.setAttribute("aria-label",`Remove ${c.name} from the list`);
+    x.onclick=()=>{ bcTags.delete(c.id); markDirty(true); renderMembers(); renderBcList(); bcRefresh(); };
+    chip.append(x); host.append(chip);
+  }
 }
 const currentList=()=>bcLists.find(l=>l.id===bcListId)||bcLists[0];
 function renderListPickers(){
@@ -776,16 +830,35 @@ function renderListPickers(){
   if(rl){ rl.innerHTML=""; for(const l of bcLists){ const o=el("option",null,l.name); o.value=l.id; rl.appendChild(o); }
     rl.value=(rlCfg&&rlCfg.listId)||bcListId; }
 }
-function switchList(id){
-  // Anything still queued belongs to the list being left; write it now, before
-  // the ticks are replaced.
-  if(bcSaveTimer){ clearTimeout(bcSaveTimer); bcSaveTimer=null; saveLists(); }
+function applyList(id){
   bcListId=id;
   const l=currentList();
   bcTags=new Map((l?l.chats:[]).map(c=>[c.id,c]));
   bcTagsListId=(l&&l.id)||id;
-  renderBcList(); bcRefresh();
+  markDirty(false);
+  renderMembers(); renderBcList(); renderListPickers(); bcRefresh();
 }
+
+// Switching away with unsaved ticks asks first, rather than silently keeping
+// or silently dropping them.
+async function switchList(id){
+  if(id===bcListId){ applyList(id); return; }
+  if(bcDirty){
+    const leaving=(bcLists.find(x=>x.id===bcTagsListId)||{}).name||"this list";
+    const keep=await sheet({ title:"Save your changes?",
+      say:`You have unticked or ticked chats in <b>${esc(leaving)}</b> without saving.`,
+      confirm:"Save and switch", cancel:"Discard changes" });
+    if(keep) await saveLists({quiet:true});
+    else {
+      // Put the list back the way it is on disk before leaving it.
+      const l=bcLists.find(x=>x.id===bcTagsListId);
+      if(l) bcTags=new Map(l.chats.map(c=>[c.id,c]));
+      markDirty(false);
+    }
+  }
+  applyList(id);
+}
+$("#bcSaveList").onclick=()=>saveLists();
 
 async function loadBroadcast(){
   try{
@@ -798,11 +871,12 @@ async function loadBroadcast(){
     if(!bcLists.some(l=>l.id===bcListId)) bcListId=bcLists[0].id;
     bcTags=new Map((currentList()?currentList().chats:[]).map(c=>[c.id,c]));
     bcTagsListId=bcListId;
+    markDirty(false);
     $("#bcMeta").textContent = d.connected
       ? `${bcChats.length} chats · ${bcChats.filter(c=>c.isGroup).length} groups`
       : "WhatsApp not connected — showing your saved tags only. Connect to tag more chats and send.";
   }catch(e){ $("#bcMeta").textContent="Could not load chats: "+e.message; }
-  renderBcList(); bcRefresh(); renderListPickers(); pollBroadcast(); loadRelayCfg();
+  renderBcList(); renderMembers(); bcRefresh(); renderListPickers(); pollBroadcast(); loadRelayCfg();
 }
 
 $("#bcListSel").onchange=()=>switchList($("#bcListSel").value);
@@ -812,15 +886,16 @@ $("#bcNewList").onclick=async()=>{
     input:{ placeholder:"e.g. Owners" }, confirm:"Create list" });
   if(!name) return;
   const id="l"+Date.now().toString(36);
+  await switchList(bcListId);       // settle any unsaved ticks first
   bcLists.push({id,name,chats:[]});
-  switchList(id);            // flushes anything pending for the previous list
-  await saveLists(); renderListPickers(); toast(`List “${name}” created`);
+  applyList(id);
+  await saveLists({quiet:true}); toast(`List “${name}” created — tick chats, then Save list`);
 };
 $("#bcRenameList").onclick=async()=>{
   const l=currentList(); if(!l) return;
   const name=await sheet({ title:"Rename list", input:{ value:l.name }, confirm:"Save" });
   if(!name||name===l.name) return;
-  l.name=name; await saveLists(); renderListPickers(); toast("Renamed");
+  l.name=name; await saveLists({quiet:true}); toast(`Renamed to “${name}”`);
 };
 $("#bcDelList").onclick=async()=>{
   const l=currentList(); if(!l) return;
@@ -829,7 +904,9 @@ $("#bcDelList").onclick=async()=>{
   if(!await sheet({ title:`Delete “${l.name}”?`, danger:true, confirm:"Delete list",
     say:`This removes the list and the ${n} chat${n===1?"":"s"} in it. <b>The chats themselves are not touched</b> — nothing is deleted in WhatsApp, and you can tick them into another list any time.` })) return;
   bcLists=bcLists.filter(x=>x.id!==l.id);
-  await saveLists(); switchList(bcLists[0].id); renderListPickers(); toast("List deleted");
+  markDirty(false);
+  applyList(bcLists[0].id);
+  await saveLists({quiet:true}); toast(`List “${l.name}” deleted`);
 };
 
 // Uploaded the moment they are chosen, so pressing Send is instant. Each one
@@ -938,10 +1015,8 @@ function renderBcList(){
   }
   if(!rows.length) host.appendChild(el("div","empty", q?"No chat matches that search.":"No chats yet — connect WhatsApp first."));
 }
-function saveBcTags(){
-  clearTimeout(bcSaveTimer);
-  bcSaveTimer=setTimeout(saveLists,250);
-}
+// Ticking marks the list as changed; nothing is written until Save is pressed.
+function saveBcTags(){ markDirty(true); renderMembers(); }
 let bcRunning=false;
 function bcRefresh(){
   const n=bcTags.size, l=currentList();
@@ -974,6 +1049,13 @@ $("#bcSend").onclick=async()=>{
   if(!text && !bcMediaList.length){ toast("Type a message or attach a file"); return; }
   const n=bcTags.size; if(!n) return;
   const l=currentList();
+  if(bcDirty){
+    const save=await sheet({ title:"Save the list first?",
+      say:"You have changed which chats are in this list but not saved it. Sending uses the <b>saved</b> list.",
+      confirm:"Save, then send", cancel:"Cancel" });
+    if(!save) return;
+    if(!await saveLists({quiet:true})) return;
+  }
   // Show exactly what is about to go out: this cannot be taken back quietly.
   // When names are filled in, show the real thing per chat rather than the
   // template -- a wrong name is only obvious once you see it rendered.
@@ -1000,7 +1082,16 @@ $("#bcSend").onclick=async()=>{
     }
   }catch{ /* fall back to the plain message below */ }
   if(!shown) peek.append(document.createTextNode(text||"(no caption)"));
-  if(!await sheet({ title:`Send to ${n} chat${n===1?"":"s"}?`, confirm:"Send now", peek, say:note })) return;
+
+  // Who it is going to, by name, above the message itself.
+  const box=el("div");
+  const who=el("div","peek"); who.style.marginBottom="10px";
+  who.append(el("span","who",`To ${n} chat${n===1?"":"s"} in ${l?l.name:""}`));
+  const names=[...bcTags.values()];
+  who.append(document.createTextNode(names.slice(0,12).map(c=>(c.isGroup?"👥 ":"")+c.name).join("\n")));
+  if(names.length>12) who.append(el("span","att",`…and ${names.length-12} more`));
+  box.append(who, peek);
+  if(!await sheet({ title:`Send this to ${n} chat${n===1?"":"s"}?`, confirm:"Send now", peek:box, say:note })) return;
   $("#bcSend").disabled=true;
   const r=await fetch("/api/broadcast/send",{method:"POST",headers:{"Content-Type":"application/json"},
     body:JSON.stringify({text,listId:bcListId,mediaIds:bcMediaList.map(m=>m.mediaId)})});

@@ -426,9 +426,9 @@ const press = (p, label) => p.evaluate((l) => {
     await new Promise(r => setTimeout(r, 600));
 
     // Switch away and straight back, the way a person would.
-    await p.evaluate(() => switchList("empty"));
+    await p.evaluate(() => { switchList("empty"); });
     await new Promise(r => setTimeout(r, 500));
-    await p.evaluate(() => switchList("main"));
+    await p.evaluate(() => { switchList("main"); });
     await new Promise(r => setTimeout(r, 700));
 
     const after = await p.evaluate(async () => (await (await fetch("/api/broadcast/lists")).json()).lists);
@@ -436,21 +436,42 @@ const press = (p, label) => p.evaluate((l) => {
     ok("the chats survive a round trip through another list", main && main.chats.length === 2,
        JSON.stringify(main && main.chats));
 
-    // The nastier case: a tick is still queued when the list changes.
-    await p.evaluate(() => {
-      switchList("main");
-      bcTags.delete("keep2@c.us");
-      saveBcTags();          // queued against main
-      switchList("empty");   // must flush to main, not write [] over it
-    });
-    await new Promise(r => setTimeout(r, 900));
-    const after2 = await p.evaluate(async () => (await (await fetch("/api/broadcast/lists")).json()).lists);
-    const main2 = after2.find(l => l.id === "main");
-    const empty2 = after2.find(l => l.id === "empty");
-    ok("a queued change lands on the list it was made in", main2 && main2.chats.length === 1,
-       JSON.stringify(main2 && main2.chats));
-    ok("and never on the list switched to", empty2 && empty2.chats.length === 0,
-       JSON.stringify(empty2 && empty2.chats));
+    // Unticking must not reach disk on its own -- that silent write is what
+    // used to empty a list.
+    await p.evaluate(() => { switchList("main"); });
+    await new Promise(r => setTimeout(r, 400));
+    await p.evaluate(() => { bcTags.delete("keep2@c.us"); saveBcTags(); });
+    await new Promise(r => setTimeout(r, 700));
+    const untouched = await p.evaluate(async () => (await (await fetch("/api/broadcast/lists")).json()).lists);
+    const mainStill = untouched.find(l => l.id === "main");
+    ok("an untick alone changes nothing on disk", mainStill && mainStill.chats.length === 2,
+       JSON.stringify(mainStill && mainStill.chats));
+    ok("but it is shown as unsaved", await p.$eval("#bcDirty", (e) => e.textContent.includes("Unsaved")));
+    ok("and Save becomes available", await p.$eval("#bcSaveList", (e) => !e.disabled));
+
+    // Discarding restores what is on disk.
+    p.once("dialog", async (d) => { await d.dismiss(); });
+    await p.evaluate(() => { switchList("empty"); });
+    await new Promise(r => setTimeout(r, 300));
+    await press(p, "Discard changes");
+    await new Promise(r => setTimeout(r, 600));
+    await p.evaluate(() => { switchList("main"); });
+    await new Promise(r => setTimeout(r, 600));
+    ok("discarding puts the chats back", await p.evaluate(() => bcTags.size) === 2);
+
+    // Saving is what writes, and it writes only the list it belongs to.
+    await p.evaluate(async () => { bcTags.delete("keep2@c.us"); saveBcTags(); await saveLists({ quiet: true }); });
+    await new Promise(r => setTimeout(r, 700));
+    const saved = await p.evaluate(async () => (await (await fetch("/api/broadcast/lists")).json()).lists);
+    const mainSaved = saved.find(l => l.id === "main");
+    const emptySaved = saved.find(l => l.id === "empty");
+    ok("Save writes the change", mainSaved && mainSaved.chats.length === 1, JSON.stringify(mainSaved && mainSaved.chats));
+    ok("and never touches the other list", emptySaved && emptySaved.chats.length === 0);
+    ok("it reads as saved afterwards", await p.$eval("#bcDirty", (e) => e.textContent.trim() === "Saved"));
+
+    // The members panel is the point of all this: you can see who is in there.
+    const members = await p.$eval("#bcMembers", (e) => e.textContent);
+    ok("the list shows who is in it", members.includes("Keep One") && !members.includes("Keep Two"), members);
   }
 
   console.log("\ngreeting each chat by name");

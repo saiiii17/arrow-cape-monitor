@@ -1712,7 +1712,7 @@ async function sendViaPage(id, { text = "", mediaPath = "" } = {}) {
         const sent = window.require("WAWebSendMsgChatAction").addAndSendMsgToChat(chat, message);
         if (Array.isArray(sent)) { await sent[0]; await sent[1]; } else { await sent; }
         trace.push("media sent through WhatsApp's own action");
-        return { ok: true, trace, id: ser(key), via: "whatsapp-media" };
+        return { ok: true, trace, id: ser(key) || lastOutgoing(), via: "whatsapp-media" };
       } catch (e) {
         trace.push("native media threw: " + (e && e.message));
       }
@@ -2177,24 +2177,36 @@ async function recallBroadcast({ dryRun = false } = {}) {
   bc.recalling = true;
   let done = 0, failed = 0;
   for (const r of targets) {
-    try {
-      if (!dryRun) {
-        const all = (r.messageIds && r.messageIds.length) ? r.messageIds : [r.messageId];
-        for (const mid of all) if (mid) await recallViaPage(mid);
+    // A chat can hold several messages -- one per picture. Each is taken back
+    // on its own, so one that WhatsApp refuses does not strand the rest.
+    const all = ((r.messageIds && r.messageIds.length) ? r.messageIds : [r.messageId]).filter(Boolean);
+    let gone = 0;
+    const trouble = [];
+    for (const mid of all) {
+      try {
+        if (!dryRun) await recallViaPage(mid);
+        gone++;
+      } catch (e) {
+        const raw = String((e && e.message) || e);
+        console.error("  [wa] recall failed:", raw);
+        trouble.push(raw.length > 2 ? raw.slice(0, 120)
+          : "WhatsApp refused it — it may be older than about two days");
       }
-      r.recalled = true; r.state = "recalled"; done++;
-    } catch (e) {
-      const raw = String((e && e.message) || e);
-      // A bare minified name is not a reason anyone can act on.
-      r.recallError = raw.length > 2 ? raw.slice(0, 140)
-        : "WhatsApp refused to delete it — it may be older than about two days";
-      console.error("  [wa] recall failed:", raw);
+    }
+    r.recalledCount = gone;
+    r.messageIds = all;
+    if (gone) { r.recalled = trouble.length === 0; r.state = "recalled"; }
+    if (trouble.length) {
+      r.recallError = all.length > 1
+        ? `${gone} of ${all.length} taken back — ${trouble[0]}`
+        : trouble[0];
       failed++;
     }
+    if (gone) done++;
   }
   bc.recalling = false;
   bc.recalledAt = new Date().toISOString();
-  bc.recalledCount = (bc.recalledCount || 0) + done;
+  bc.recalledCount = (bc.recalledCount || 0) + bc.results.reduce((n, r) => n + (r.recalledCount || 0), 0);
   step(`Recalled ${done} message${done === 1 ? "" : "s"}${failed ? `, ${failed} could not be deleted (older than ~2 days, or already gone)` : ""}`,
     failed ? "warn" : "ok");
   if (!dryRun) { try { fs.writeFileSync(LAST_BROADCAST_FILE, JSON.stringify(broadcastStatus(), null, 2)); } catch { /* best effort */ } }
