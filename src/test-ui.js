@@ -389,7 +389,8 @@ const press = (p, label) => p.evaluate((l) => {
     // Attachments alone are enough to send -- no text needed -- provided there
     // is somewhere to send them, so a chat is ticked for this check.
     await p.$eval("#bcText", (e) => { e.value = ""; e.dispatchEvent(new Event("input")); });
-    await p.evaluate(() => { bcTags.set("t@c.us", { id: "t@c.us", name: "Tester" }); bcRefresh(); });
+    // Send is also gated on WhatsApp being up, which it is not in a test server.
+    await p.evaluate(() => { waReady = true; bcTags.set("t@c.us", { id: "t@c.us", name: "Tester" }); bcRefresh(); });
     await new Promise(r => setTimeout(r, 150));
     ok("attachments alone enable Send", await p.$eval("#bcSend", (e) => !e.disabled));
 
@@ -510,6 +511,37 @@ const press = (p, label) => p.evaluate((l) => {
     await p.$eval("#bcText", (e) => { e.value = ""; e.dispatchEvent(new Event("input")); });
     await new Promise(r => setTimeout(r, 150));
     ok("the hint goes away when the token does", await p.$eval("#bcNameHint", (e) => e.hidden));
+  }
+
+  console.log("\nthe send button says what it will do");
+  {
+    await p.evaluate(() => {
+      waReady = true;
+      bcTags = new Map([["a@c.us", { id: "a@c.us", name: "One" }], ["b@c.us", { id: "b@c.us", name: "Two" }]]);
+      bcMediaList = [];
+      document.querySelector("#bcText").value = "hello";
+      bcRefresh();
+    });
+    await new Promise(r => setTimeout(r, 200));
+    ok("it names the number of chats", (await p.$eval("#bcSend", (e) => e.textContent)) === "Send to 2 chats");
+
+    await p.evaluate(() => { bcTags = new Map([["a@c.us", { id: "a@c.us", name: "One" }]]); bcRefresh(); });
+    await new Promise(r => setTimeout(r, 150));
+    ok("and reads properly for one", (await p.$eval("#bcSend", (e) => e.textContent)) === "Send to 1 chat");
+
+    // Disabled buttons must say why, or they look broken.
+    await p.evaluate(() => { document.querySelector("#bcText").value = ""; bcRefresh(); });
+    await new Promise(r => setTimeout(r, 150));
+    ok("a disabled Send explains itself",
+       (await p.$eval("#bcSend", (e) => e.title)).includes("Type a message"));
+
+    await p.evaluate(() => { waReady = false; bcRefresh(); });
+    await new Promise(r => setTimeout(r, 150));
+    ok("being offline is said out loud, not just implied",
+       await p.$eval("#bcOffline", (e) => !e.hidden));
+    ok("and nothing can be sent while offline", await p.$eval("#bcSend", (e) => e.disabled));
+
+    await p.evaluate(() => { waReady = true; bcTags = new Map(); bcRefresh(); });
   }
 
   console.log("\nthe app asks its own questions, not the browser's");

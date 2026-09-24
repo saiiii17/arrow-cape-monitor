@@ -544,6 +544,11 @@
             <input type="file" id="bcFile" accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.csv,.txt" multiple hidden>
             <span class="sub" id="bcFileChip" hidden></span>
           </div>
+          <div class="sub" id="bcOffline" hidden
+               style="margin:0 0 10px;padding:9px 12px;border-radius:9px;background:var(--accent-soft);
+                      border:1px solid var(--line);line-height:1.5">
+            WhatsApp is not connected. Link it on the <b>WhatsApp</b> tab, then come back — nothing can be sent until then.
+          </div>
           <div class="bcbar" style="flex-wrap:wrap">
             <button class="btn primary" id="bcSend" disabled>Send to list</button>
             <button class="btn" id="bcRecall" hidden title="Delete the last broadcast for everyone">↩︎ Recall last broadcast</button>
@@ -763,7 +768,7 @@ $("#tab-bc").onclick=()=>show("bc");
 // a refresh and a redeploy. Chat names come from WhatsApp and are only ever
 // inserted as text.
 let bcChats=[], bcTags=new Map(), bcTimer=null, bcSaveTimer=null;
-let bcLists=[], bcListId="", bcMediaList=[];
+let bcLists=[], bcListId="", bcMediaList=[], waReady=false;
 // Which list the ticks on screen belong to. Without this, a save that was
 // queued before switching lists wrote the new list's ticks over the old
 // list's chats -- and switching to an empty list emptied the one you left.
@@ -867,6 +872,7 @@ async function loadBroadcast(){
       (await fetch("/api/broadcast/lists")).json(),
     ]);
     bcChats=d.chats||[];
+    waReady=Boolean(d.connected);
     bcLists=(ls.lists&&ls.lists.length)?ls.lists:[{id:"main",name:"Main list",chats:[]}];
     if(!bcLists.some(l=>l.id===bcListId)) bcListId=bcLists[0].id;
     bcTags=new Map((currentList()?currentList().chats:[]).map(c=>[c.id,c]));
@@ -1024,9 +1030,22 @@ function bcRefresh(){
   $("#bcCount").textContent = n ? `${n} chat${n===1?"":"s"} in “${l?l.name:""}”` : "tick chats below";
   // An attachment on its own is a valid broadcast: the text becomes its caption.
   const hasContent = Boolean($("#bcText").value.trim()) || bcMediaList.length > 0;
-  $("#bcSend").disabled = bcRunning || !n || !hasContent;
+  const off = !waReady;
+  $("#bcSend").disabled = bcRunning || !n || !hasContent || off;
+  // The button says what pressing it will do, so nobody has to count ticks.
+  $("#bcSend").textContent = bcRunning ? "Sending…"
+    : n ? `Send to ${n} chat${n===1?"":"s"}` : "Send to list";
+  $("#bcSend").title = off ? "WhatsApp is not connected — link it on the WhatsApp tab"
+    : !n ? "Tick at least one chat"
+    : !hasContent ? "Type a message or attach a file" : "";
+  const warn=$("#bcOffline");
+  if(warn) warn.hidden=!off;
   renderListPickers();
 }
+// Cmd/Ctrl+Enter sends, the way every messaging app does.
+$("#bcText").addEventListener("keydown",(e)=>{
+  if((e.metaKey||e.ctrlKey)&&e.key==="Enter"&&!$("#bcSend").disabled){ e.preventDefault(); $("#bcSend").click(); }
+});
 $("#bcText").oninput=()=>{ bcRefresh(); bcNameHint(); };
 function bcNameHint(){
   const h=$("#bcNameHint"), on=/\{\s*(name|first_?name|full_?name)\s*\}/i.test($("#bcText").value);

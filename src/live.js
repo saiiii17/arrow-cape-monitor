@@ -2135,36 +2135,62 @@ async function refreshAcks({ force = false } = {}) {
 // models. client.getMessageById() goes through the library's chat lookup,
 // which cannot address a linked id, so recall failed with a one-letter
 // minified error where a reason should have been.
-async function recallViaPage(messageId) {
-  return client.pupPage.evaluate(async (msgId) => {
+async function recallViaPage(messageIds) {
+  const ids = (Array.isArray(messageIds) ? messageIds : [messageIds]).map(String).filter(Boolean);
+  if (!ids.length) throw new Error("nothing to take back");
+  return client.pupPage.evaluate(async (list) => {
     const C = window.require("WAWebCollections");
-    let msg = null;
-    try { msg = C.Msg.get(msgId) || null; } catch { /* try the slower route */ }
-    if (!msg) {
-      try {
-        const got = await C.Msg.getMessagesById([msgId]);
-        msg = (got && got.messages && got.messages[0]) || null;
-      } catch { /* still nothing */ }
+    const found = [];
+    let missing = 0;
+    for (const id of list) {
+      let m = null;
+      try { m = C.Msg.get(id) || null; } catch { /* slower route below */ }
+      if (!m) {
+        try {
+          const got = await C.Msg.getMessagesById([id]);
+          m = (got && got.messages && got.messages[0]) || null;
+        } catch { /* gone */ }
+      }
+      if (m) found.push(m); else missing++;
     }
-    if (!msg) throw new Error("that message is no longer on this device");
+    if (!found.length) throw new Error("those messages are no longer on this device");
 
     let chat = null;
-    try { chat = C.Chat.get(msg.id.remote) || (await C.Chat.find(msg.id.remote)) || null; } catch { /* below */ }
+    try { chat = C.Chat.get(found[0].id.remote) || (await C.Chat.find(found[0].id.remote)) || null; } catch { /* below */ }
     if (!chat) throw new Error("the chat it was sent to could not be opened");
 
     const cap = window.require("WAWebMsgActionCapability");
-    const allowed = cap.canSenderRevokeMsg(msg) || cap.canAdminRevokeMsg(msg);
-    if (!allowed) throw new Error("WhatsApp will not take this one back — it is older than about two days");
+    const allowed = found.filter((m) => cap.canSenderRevokeMsg(m) || cap.canAdminRevokeMsg(m));
+    if (!allowed.length) throw new Error("WhatsApp will not take these back — they are older than about two days");
 
+    // Every message in one call. Revoking them one at a time reported success
+    // for each but only the first actually went, so a broadcast of two
+    // pictures left one behind.
     const { Cmd } = window.require("WAWebCmd");
     try {
-      await Cmd.sendRevokeMsgs(chat, { list: [msg], type: "message" }, { clearMedia: true });
+      await Cmd.sendRevokeMsgs(chat, { list: allowed, type: "message" }, { clearMedia: true });
     } catch (e) {
-      // Older WhatsApp builds take the list directly.
-      await Cmd.sendRevokeMsgs(chat, [msg], { clearMedia: true, type: msg.id.fromMe ? "Sender" : "Admin" });
+      await Cmd.sendRevokeMsgs(chat, allowed, { clearMedia: true, type: "Sender" });
     }
-    return true;
-  }, String(messageId));
+
+    // Checked, not assumed: WhatsApp marks a withdrawn message revoked.
+    const gone = () => allowed.filter((m) => {
+      const t = String((m && m.type) || ""), sub = String((m && m.subtype) || "");
+      return m.isRevoked === true || t === "revoked" || sub === "revoked";
+    }).length;
+    let confirmed = gone();
+    for (let i = 0; i < 6 && confirmed < allowed.length; i++) {
+      await new Promise((r) => setTimeout(r, 250));
+      confirmed = gone();
+    }
+    return {
+      asked: list.length,
+      confirmed,
+      attempted: allowed.length,
+      refused: found.length - allowed.length,
+      missing,
+    };
+  }, ids);
 }
 
 async function recallBroadcast({ dryRun = false } = {}) {
@@ -2177,32 +2203,34 @@ async function recallBroadcast({ dryRun = false } = {}) {
   bc.recalling = true;
   let done = 0, failed = 0;
   for (const r of targets) {
-    // A chat can hold several messages -- one per picture. Each is taken back
-    // on its own, so one that WhatsApp refuses does not strand the rest.
     const all = ((r.messageIds && r.messageIds.length) ? r.messageIds : [r.messageId]).filter(Boolean);
-    let gone = 0;
-    const trouble = [];
-    for (const mid of all) {
-      try {
-        if (!dryRun) await recallViaPage(mid);
-        gone++;
-      } catch (e) {
-        const raw = String((e && e.message) || e);
-        console.error("  [wa] recall failed:", raw);
-        trouble.push(raw.length > 2 ? raw.slice(0, 120)
-          : "WhatsApp refused it — it may be older than about two days");
+    try {
+      // The whole chat's messages go in one call.
+      const out = dryRun
+        ? { confirmed: all.length, attempted: all.length, refused: 0, missing: 0 }
+        : await recallViaPage(all);
+      r.recalledCount = out.confirmed;
+      r.messageIds = all;
+      if (out.confirmed >= all.length) {
+        r.recalled = true; r.state = "recalled"; done++;
+      } else if (out.confirmed > 0) {
+        r.state = "recalled";
+        r.recallError = `${out.confirmed} of ${all.length} taken back` +
+          (out.refused ? " — the rest are older than about two days" : " — WhatsApp did not confirm the rest");
+        done++; failed++;
+      } else {
+        r.recallError = out.refused
+          ? "WhatsApp would not take these back — older than about two days"
+          : "WhatsApp did not confirm the deletion";
+        failed++;
       }
-    }
-    r.recalledCount = gone;
-    r.messageIds = all;
-    if (gone) { r.recalled = trouble.length === 0; r.state = "recalled"; }
-    if (trouble.length) {
-      r.recallError = all.length > 1
-        ? `${gone} of ${all.length} taken back — ${trouble[0]}`
-        : trouble[0];
+    } catch (e) {
+      const raw = String((e && e.message) || e);
+      console.error("  [wa] recall failed:", raw);
+      r.recallError = raw.length > 2 ? raw.slice(0, 140)
+        : "WhatsApp refused to delete it — it may be older than about two days";
       failed++;
     }
-    if (gone) done++;
   }
   bc.recalling = false;
   bc.recalledAt = new Date().toISOString();

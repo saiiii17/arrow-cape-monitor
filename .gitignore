@@ -22,3 +22,9 @@ _chat 2.txt
 .DS_Store
 *.log
 data/linked.flag
+# runtime state and captured chats -- never publish real messages or contacts
+data/dev/
+data/uploads/
+data/last-broadcast.json
+data/broadcast-lists.json
+

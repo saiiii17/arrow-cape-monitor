@@ -339,6 +339,16 @@ const waitDone = async () => { for (let i = 0; i < 200 && live.broadcastStatus()
   await test("a runaway message is trimmed, not pasted whole", () =>
     assert.ok(live.sendErrorText(new Error("x".repeat(500))).length <= 160));
 
+  await test("a chat's messages are taken back together, not one at a time", () => {
+    // Revoking them one by one reported success for each while only the first
+    // actually went, so two pictures left one behind in the chat.
+    const src = fs.readFileSync(path.join(__dirname, "live.js"), "utf8");
+    const fn = src.slice(src.indexOf("async function recallViaPage"), src.indexOf("async function recallBroadcast"));
+    assert.match(fn, /sendRevokeMsgs\(chat,\s*\{\s*list:\s*allowed/, "every message goes in one call");
+    assert.ok(!/for \(const mid of all\)/.test(src), "nothing should loop a revoke per message any more");
+    assert.match(fn, /isRevoked/, "the result is checked, not assumed");
+  });
+
   console.log("\ncaps and pacing");
 
   await test("a list longer than the cap is refused before a single message goes out", async () => {
