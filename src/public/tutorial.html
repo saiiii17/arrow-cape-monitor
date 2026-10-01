@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Arrow Cape · How it works</title>
+<link rel="icon" type="image/png" href="/favicon.png">
+<link rel="apple-touch-icon" href="/icon-180.png">
+<meta name="theme-color" content="#0b1f3a">
+<meta name="description" content="Send one message to every WhatsApp group that matters, in about thirty seconds.">
+<style>
+  :root{--ink:#14161a;--dim:#5f6672;--faint:#8b929e;--line:#e4e6ea;--sunk:#f6f7f9;--accent:#1f6feb;
+    --accent-soft:#e8f0fe;--good:#1f8a53;--warn:#b8860b;--bad:#c0392b;--panel:#fff;--bg:#f4f5f7;
+    --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,monospace}
+  @media (prefers-color-scheme:dark){:root{--ink:#e9eaec;--dim:#9aa1ad;--faint:#6f7783;--line:#272c34;
+    --sunk:#1c2027;--accent:#4c8ffb;--accent-soft:#17243b;--good:#4cc38a;--warn:#d9a441;--bad:#e06c5f;
+    --panel:#171a1f;--bg:#0f1114}}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font:16px/1.65 -apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",Roboto,sans-serif;
+    -webkit-text-size-adjust:100%}
+  header{background:linear-gradient(180deg,#1d4f8f,#0b1f3a);color:#fff;
+    padding:calc(18px + env(safe-area-inset-top)) 20px 18px}
+  header .in{max-width:760px;margin:0 auto;display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+  header img{width:34px;height:34px;border-radius:9px}
+  header b{font-size:17px;letter-spacing:-.01em}
+  header nav{margin-left:auto;display:flex;gap:4px;flex-wrap:wrap}
+  header nav a{color:rgba(255,255,255,.82);text-decoration:none;font-size:13.5px;padding:5px 9px;border-radius:7px}
+  header nav a:hover,header nav a[aria-current]{background:rgba(255,255,255,.14);color:#fff}
+  main{max-width:760px;margin:0 auto;padding:28px 20px calc(56px + env(safe-area-inset-bottom))}
+  h1{font-size:27px;line-height:1.25;letter-spacing:-.02em;margin:0 0 6px}
+  .lede{font-size:17px;color:var(--dim);margin:0 0 28px}
+  h2{font-size:19px;letter-spacing:-.01em;margin:32px 0 10px;padding-top:18px;border-top:1px solid var(--line)}
+  h2:first-of-type{border-top:0;padding-top:0;margin-top:26px}
+  h3{font-size:15.5px;margin:20px 0 6px}
+  p,li{color:var(--ink)}
+  p{margin:0 0 14px}
+  ul,ol{margin:0 0 14px;padding-left:22px}
+  li{margin:0 0 7px}
+  a{color:var(--accent)}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:13px;padding:18px 20px;margin:0 0 18px}
+  .card h3{margin-top:0}
+  .card p:last-child,.card ul:last-child,.card ol:last-child{margin-bottom:0}
+  table{width:100%;border-collapse:collapse;margin:0 0 18px;font-size:15px}
+  th,td{text-align:left;padding:9px 11px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{font-size:12.5px;text-transform:uppercase;letter-spacing:.04em;color:var(--faint);font-weight:600}
+  .sub{color:var(--dim);font-size:14px}
+  .step{display:flex;gap:14px;margin:0 0 16px}
+  .step .n{flex:0 0 28px;height:28px;border-radius:50%;background:var(--accent);color:#fff;font-weight:600;
+    font-size:14px;display:flex;align-items:center;justify-content:center}
+  .step .b{flex:1;min-width:0}
+  .step .b b{display:block;margin-bottom:2px}
+  .cta{display:inline-block;background:var(--accent);color:#fff;text-decoration:none;font-weight:600;
+    padding:12px 20px;border-radius:11px;margin:4px 0}
+  .note{background:var(--accent-soft);border:1px solid var(--line);border-radius:11px;padding:14px 16px;margin:0 0 18px}
+  .note p:last-child{margin-bottom:0}
+  .tag{display:inline-block;font-size:12px;font-weight:600;padding:2px 8px;border-radius:999px;
+    background:var(--sunk);border:1px solid var(--line);color:var(--dim);margin-left:6px}
+  footer{border-top:1px solid var(--line);padding:22px 20px calc(30px + env(safe-area-inset-bottom));
+    color:var(--faint);font-size:13px}
+  footer .in{max-width:760px;margin:0 auto;display:flex;gap:14px;flex-wrap:wrap;align-items:center}
+  footer a{color:var(--dim);text-decoration:none}
+  footer a:hover{color:var(--ink)}
+  .addr{font-style:normal;color:var(--dim);font-size:14px;line-height:1.6}
+  @media (max-width:600px){
+    h1{font-size:23px} main{padding-top:22px} header nav a{padding:5px 7px;font-size:13px}
+    table{font-size:14px} th,td{padding:8px 7px}
+  }
+</style>
+</head>
+<body>
+  <header><div class="in">
+    <img src="/icon-180.png" alt=""><b>Arrow Cape</b>
+    <nav>
+      <a href="/tutorial" aria-current="page">How it works</a>
+      <a href="/pricing">Pricing</a>
+      <a href="/support">Support</a>
+      <a href="/login">Sign in</a>
+    </nav>
+  </div></header>
+  <main>
+
+    <h1>One message, every group, thirty seconds</h1>
+    <p class="lede">You type it once. We send it to each chat one at a time, with their own name on it.</p>
+
+    <h2>The thirty-second version</h2>
+
+    <div class="step"><div class="n">1</div><div class="b">
+      <b>Link your WhatsApp</b>
+      <span class="sub">Open the WhatsApp tab and scan the code with your phone, exactly as you would to use
+      WhatsApp on a laptop. Your number, your chats. You can unlink whenever you like.</span>
+    </div></div>
+
+    <div class="step"><div class="n">2</div><div class="b">
+      <b>Build a list</b>
+      <span class="sub">Tick the groups and contacts you send to, name the list — Owners, Charterers, the desk —
+      and press Save. Keep as many lists as you need.</span>
+    </div></div>
+
+    <div class="step"><div class="n">3</div><div class="b">
+      <b>Write the message</b>
+      <span class="sub">Type it once. Press <b>+ Their name</b> and each chat gets their own: "Good morning
+      Meridian" to one, "Good morning Dalton" to the next. Attach up to ten images or files.</span>
+    </div></div>
+
+    <div class="step"><div class="n">4</div><div class="b">
+      <b>Check, then send</b>
+      <span class="sub">You see exactly who it is going to and the real text with the names filled in, before
+      anything leaves. Then press Send.</span>
+    </div></div>
+
+    <div class="step"><div class="n">5</div><div class="b">
+      <b>Watch it land</b>
+      <span class="sub">A tick per chat: one for sent, two for delivered, two blue for read — the same marks
+      your phone shows.</span>
+    </div></div>
+
+    <h2>If you send the wrong thing</h2>
+    <div class="card">
+      <h3>Recall</h3>
+      <p>One button deletes the message for everyone, in every chat it went to. Each chat then shows
+      "This message was deleted", as it would if you had deleted it yourself.</p>
+      <p class="sub">WhatsApp only allows this for about two days, and anyone who already read it has read it.
+      If a chat refuses, you are told which one and why — never left guessing.</p>
+    </div>
+
+    <h2>Sending from WhatsApp itself</h2>
+    <p>You do not have to open the website. Pick one WhatsApp group as your broadcast group, and anything
+    <b>you</b> post in it goes out to your chosen list. The app replies in that group to say how it went.</p>
+    <p class="sub">Only your own new messages count. Other members posting there, and edits to old messages,
+    are ignored.</p>
+
+    <h2>Why it sends one at a time</h2>
+    <div class="note">
+      <p>Messages go out one chat at a time, a few seconds apart. The same text fired at fifty chats at once
+      is exactly what WhatsApp treats as spam, and the account it would act against is yours.</p>
+      <p class="sub">For the same reason there is a cap on how many chats one broadcast reaches. Deliberate,
+      not a limitation.</p>
+    </div>
+
+    <h2>What you need</h2>
+    <ul>
+      <li>A WhatsApp account on a phone you have with you, to scan the code</li>
+      <li>The groups and contacts already in that WhatsApp — we do not add anyone</li>
+      <li>A browser. On a phone you can add it to your home screen and it opens like an app</li>
+    </ul>
+
+    <p><a class="cta" href="/register">Request an account</a></p>
+    <p class="sub">Every request is reviewed by hand, usually within a working day.</p>
+
+  </main>
+  <footer><div class="in">
+    <span>Arrow Cape Broadcast</span>
+    <a href="/tutorial">How it works</a>
+    <a href="/pricing">Pricing</a>
+    <a href="/support">Support</a>
+    <a href="/privacy">Privacy</a>
+    <a href="/terms">Terms</a>
+  </div></footer>
+</body>
+</html>

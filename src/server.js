@@ -121,7 +121,10 @@ const server = http.createServer(async (req, res) => {
   // Anyone may ask for an account; nobody gets in until the owner approves it.
   if (url.pathname === "/api/register" && req.method === "POST") {
     if (!auth.enabled()) return json(res, 400, { error: "Accounts are not in use on this server" });
-    if (!auth.allowAttempt(ip, "register", 5)) return json(res, 429, { error: "Too many attempts — wait a minute" });
+    // Five a minute per address: a real person asks once. Raised only by the
+    // test suites, which register repeatedly from one address.
+    const regLimit = Number(process.env.REGISTER_ATTEMPTS_PER_MIN || 5);
+    if (!auth.allowAttempt(ip, "register", regLimit)) return json(res, 429, { error: "Too many attempts — wait a minute" });
     const { email, password, name } = await readBody(req);
     try {
       users.createUser({ email, password, name, role: "user", status: "pending" });

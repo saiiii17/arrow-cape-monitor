@@ -377,13 +377,14 @@
 <body>
 
 <header>
-  <div class="brand">Arrow Cape <span>· monitor</span><span id="brandLive" hidden class="livedot" title="Live — capturing WhatsApp"></span><a id="signout" href="/api/logout" hidden>Sign out</a></div>
+  <div class="brand">Arrow Cape <span>· monitor</span><span id="brandLive" hidden class="livedot" title="Live — capturing WhatsApp"></span><span id="whoami" hidden class="sub" style="margin-left:12px;font-size:12.5px"></span><a id="signout" href="/api/logout" hidden>Sign out</a></div>
   <nav role="tablist">
     <button role="tab" id="tab-c5" aria-selected="true" aria-label="C5 Accounts"><i aria-hidden="true">📊</i><span class="lg">C5 Accounts</span><span class="sm">C5</span></button>
     <button role="tab" id="tab-c3" aria-selected="false" aria-label="C3 Cargo and Tonnage"><i aria-hidden="true">🚢</i><span class="lg">C3 Cargo &amp; Tonnage</span><span class="sm">C3</span></button>
     <button role="tab" id="tab-mx" aria-selected="false" aria-label="Matches"><i aria-hidden="true">🔗</i><span class="lg">Matches</span><span class="sm">Matches</span></button>
     <button role="tab" id="tab-wa" aria-selected="false" aria-label="WhatsApp"><i aria-hidden="true">💬</i><span class="lg">WhatsApp</span><span class="sm">WhatsApp</span></button>
     <button role="tab" id="tab-bc" aria-selected="false" aria-label="Broadcast"><i aria-hidden="true">📣</i><span class="lg">Broadcast</span><span class="sm">Broadcast</span></button>
+    <button role="tab" id="tab-ac" aria-selected="false" aria-label="Accounts" hidden><i aria-hidden="true">👤</i><span class="lg">Accounts</span><span class="sm">Accounts</span></button>
   </nav>
   <span class="grow"></span>
   <div class="ctl" id="ctl-c5">
@@ -462,7 +463,7 @@
           <div id="waQr" style="margin-top:16px"></div>
         </div>
       </div>
-      <div class="card">
+      <div class="card" id="waHistoryOnly">
         <h3>2 · Choose the groups</h3>
         <div style="padding:16px">
           <p class="sub" style="margin:0 0 12px;line-height:1.6">
@@ -589,6 +590,70 @@
     </div>
   </section>
 
+  <section id="v-ac" hidden>
+    <div class="bar"><h2>Accounts</h2><span class="sub" id="acMeta">loading…</span></div>
+    <div class="cols2">
+      <div class="card">
+        <h3>People</h3>
+        <div style="padding:14px 16px">
+          <p class="sub" style="margin:0 0 12px;line-height:1.55">
+            Anyone can request an account, but nobody gets in until you approve them here. An approved
+            customer sees the broadcast tools and their own WhatsApp — never the C5 or C3 reading.
+          </p>
+          <div id="acList"></div>
+        </div>
+      </div>
+      <div class="card">
+        <h3>Your account</h3>
+        <div style="padding:14px 16px">
+          <p class="sub" id="acWho" style="margin:0 0 14px"></p>
+
+          <h4 style="margin:0 0 8px;font-size:13.5px">Two-factor authentication</h4>
+          <p class="sub" style="margin:0 0 10px;line-height:1.55">
+            Your account reads the broker's chats and the vessel matching. A code from your phone, on top of
+            your password, means a stolen password alone is not enough. Customers are not asked for this.
+          </p>
+          <div class="bcbar" style="flex-wrap:wrap">
+            <span class="sub" id="tfState">checking…</span>
+            <button class="btn primary" id="tfOn" hidden>Turn on 2FA</button>
+            <button class="btn" id="tfOff" hidden>Turn off</button>
+          </div>
+
+          <div id="tfSetup" hidden style="margin-top:14px;padding:14px;border:1px solid var(--line);border-radius:10px;background:var(--sunk)">
+            <p class="sub" style="margin:0 0 10px;line-height:1.55">
+              Add this to Google Authenticator, 1Password or Authy, then type the code it shows.
+            </p>
+            <code id="tfSecret" style="display:block;font-family:var(--mono);font-size:15px;letter-spacing:.08em;
+              word-break:break-all;padding:9px 11px;background:var(--panel);border:1px solid var(--line);
+              border-radius:8px;margin:0 0 10px"></code>
+            <div class="bcbar" style="flex-wrap:wrap">
+              <input id="tfCode" placeholder="000000" inputmode="numeric" maxlength="6"
+                     style="width:110px;font-family:var(--mono);font-size:17px;letter-spacing:.2em;text-align:center">
+              <button class="btn primary" id="tfConfirm">Confirm</button>
+              <button class="btn" id="tfCancel">Cancel</button>
+            </div>
+            <p class="sub" id="tfMsg" style="margin:10px 0 0"></p>
+          </div>
+
+          <h4 style="margin:18px 0 8px;font-size:13.5px">Change your password</h4>
+          <div class="bcbar" style="flex-wrap:wrap">
+            <input id="pwCur" type="password" placeholder="Current" autocomplete="current-password" style="width:130px">
+            <input id="pwNew" type="password" placeholder="New (8+)" autocomplete="new-password" style="width:130px">
+            <button class="btn" id="pwSave">Change</button>
+          </div>
+          <p class="sub" id="pwMsg" style="margin:10px 0 0"></p>
+
+          <h4 style="margin:18px 0 8px;font-size:13.5px">Customer sessions running now</h4>
+          <p class="sub" style="margin:0 0 8px;line-height:1.55">
+            Each linked WhatsApp holds a browser open and costs about 1.2 GB. Idle ones close by themselves
+            after 30 minutes without unlinking anyone.
+          </p>
+          <div id="acWorkers" class="members"></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
   <section id="v-mx" hidden>
     <div class="bar"><h2>Cargo → vessel matches</h2><span class="sub" id="metaM"></span></div>
     <div class="card" id="matches"></div>
@@ -604,9 +669,43 @@
 // sign-in page instead of showing empty panels. No-op when sign-in is off.
 { const f = window.fetch.bind(window);
   window.fetch = async (...a) => { const r = await f(...a); if (r.status === 401) location.href = "/login"; return r; }; }
+// What this account may see. The server has already refused everything else --
+// this only stops the page drawing a tab whose data would come back 403.
+let ME = { role: "admin", email: "", name: "", twoFactor: false };
+let CAN = { broadcast: true, accounts: true, c5: true, c3: true, matches: true, history: true };
 fetch("/api/session").then(r=>r.json()).then(d=>{
   if(d.auth) document.getElementById("signout").hidden=false;
+  if(d.user) ME = d.user;
+  if(d.can) CAN = d.can;
+  // Deferred: show() and prefs are defined further down this file.
+  setTimeout(applyRole, 0);
 }).catch(()=>{});
+
+function applyRole(){
+  const show = (sel, on) => { const e = document.querySelector(sel); if (e) e.hidden = !on; };
+  show("#tab-c5", CAN.c5);
+  show("#tab-c3", CAN.c3);
+  show("#tab-mx", CAN.matches);
+  show("#tab-ac", CAN.accounts);
+  // A customer's WhatsApp tab is theirs: linking their own number, not
+  // choosing which of the broker's groups to capture.
+  const hist = document.querySelector("#waHistoryOnly");
+  if (hist) hist.hidden = !CAN.history;
+  if (ME.email) {
+    const who = document.querySelector("#whoami");
+    if (who) { who.hidden = false; who.textContent = ME.name || ME.email; }
+  }
+  // Land on something they can actually use.
+  if (!CAN.c5) {
+    const wanted = prefs.get("tab");
+    const allowed = ["wa", "bc", ...(CAN.accounts ? ["ac"] : [])];
+    show("#ctl-c5", false);
+    show("#ctl-c3", false);
+    show("#dates", false);
+    if (!allowed.includes(wanted)) show_default();
+  }
+}
+function show_default(){ try { show("bc"); } catch { /* not defined yet */ } }
 const $ = (s) => document.querySelector(s);
 const ACCTS = ["RIO","FMG","BHP"];
 let c5 = null, c3 = null, view = "c5";
@@ -705,7 +804,7 @@ function show(v){
   const sc=document.querySelector("main"); if(sc) sc.scrollTop=0;
   scrollTo(0,0);
   prefs.set("tab",v);
-  for (const [k,tab,sec] of [["c5","#tab-c5","#v-c5"],["c3","#tab-c3","#v-c3"],["mx","#tab-mx","#v-mx"],["wa","#tab-wa","#v-wa"],["bc","#tab-bc","#v-bc"]]){
+  for (const [k,tab,sec] of [["c5","#tab-c5","#v-c5"],["c3","#tab-c3","#v-c3"],["mx","#tab-mx","#v-mx"],["wa","#tab-wa","#v-wa"],["bc","#tab-bc","#v-bc"],["ac","#tab-ac","#v-ac"]]){
     $(tab).setAttribute("aria-selected", String(k===v));
     $(sec).hidden = k!==v;
   }
@@ -714,10 +813,12 @@ function show(v){
   if ((v==="c3"||v==="mx") && !c3) loadC3();
   if (v==="wa") fetch("/api/wa/status").then(r=>r.json()).then(waRender).catch(()=>{});
   if (v==="bc") loadBroadcast();
+  if (v==="ac") loadAccounts();
 }
 $("#tab-c5").onclick=()=>show("c5"); $("#tab-c3").onclick=()=>show("c3");
 $("#tab-mx").onclick=()=>show("mx"); $("#tab-wa").onclick=()=>show("wa");
 $("#tab-bc").onclick=()=>show("bc");
+$("#tab-ac").onclick=()=>show("ac");
 
 // On phones the header keeps only the brand: the date pickers and the action
 // buttons move into the scrolling content, and the tab bar becomes the page's
@@ -772,6 +873,169 @@ $("#tab-bc").onclick=()=>show("bc");
 // a refresh and a redeploy. Chat names come from WhatsApp and are only ever
 // inserted as text.
 let bcChats=[], bcTags=new Map(), bcTimer=null, bcSaveTimer=null;
+// ---- Accounts, for the admin ------------------------------------------------
+async function loadAccounts(){
+  try{
+    const d=await (await fetch("/api/users")).json();
+    renderAccounts(d.users||[]);
+  }catch{ $("#acMeta").textContent="could not load accounts"; }
+  $("#acWho").textContent=`${ME.name?ME.name+" · ":""}${ME.email}`;
+  renderTwoFactor();
+  loadWorkers();
+}
+
+function renderAccounts(rows){
+  const host=$("#acList"); host.innerHTML="";
+  const waiting=rows.filter(u=>u.status==="pending");
+  const others=rows.filter(u=>u.status!=="pending");
+  $("#acMeta").textContent = waiting.length
+    ? `${waiting.length} waiting for approval`
+    : `${rows.length} account${rows.length===1?"":"s"}`;
+
+  // Whoever is waiting comes first: that is the only thing here that needs doing.
+  for(const group of [["Waiting for approval",waiting],["Accounts",others]]){
+    if(!group[1].length) continue;
+    host.append(el("div","hd",group[0]));
+    for(const u of group[1]) host.append(accountRow(u));
+  }
+  if(!rows.length) host.append(el("div","empty","No accounts yet."));
+}
+
+function accountRow(u){
+  const row=el("label","bcrow");
+  row.style.cursor="default";
+  const left=el("span","nm", (u.name||u.email) + (u.role==="admin"?" · admin":""));
+  const bits=[u.email];
+  if(u.status==="active") bits.push("active");
+  if(u.status==="suspended") bits.push("suspended");
+  if(u.twoFactor) bits.push("2FA on");
+  if(u.lastLoginAt) bits.push("last in "+new Date(u.lastLoginAt).toLocaleDateString());
+  row.append(left, el("span","sub",bits.join(" · ")));
+
+  const acts=el("span"); acts.style.cssText="display:flex;gap:6px;margin-left:auto";
+  const btn=(label,cls,fn)=>{ const b=el("button",cls||"btn",label); b.style.cssText="padding:3px 9px;min-height:0;font-size:12.5px"; b.onclick=(e)=>{e.preventDefault();fn();}; return b; };
+
+  if(u.role!=="admin"){
+    if(u.status==="pending") acts.append(btn("Approve","btn primary",()=>setStatus(u,"active")));
+    if(u.status==="active")  acts.append(btn("Suspend",null,()=>setStatus(u,"suspended")));
+    if(u.status==="suspended") acts.append(btn("Restore","btn primary",()=>setStatus(u,"active")));
+    acts.append(btn("Delete",null,()=>removeAccount(u)));
+  }
+  row.append(acts);
+  return row;
+}
+
+async function setStatus(u,status){
+  if(status==="suspended" && !await sheet({ title:`Suspend ${u.name||u.email}?`, danger:true, confirm:"Suspend",
+    say:"They are signed out at once and cannot broadcast. Their lists and their WhatsApp link are kept, so restoring them later puts everything back." })) return;
+  try{
+    const r=await fetch("/api/users/status",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({id:u.id,status})});
+    const d=await r.json();
+    if(!r.ok){ toast(d.error||"Could not change that"); return; }
+    toast(status==="active"?`${u.name||u.email} can sign in now`:`${u.name||u.email} suspended`);
+    loadAccounts();
+  }catch{ toast("Could not change that"); }
+}
+
+async function removeAccount(u){
+  if(!await sheet({ title:`Delete ${u.name||u.email}?`, danger:true, confirm:"Delete account",
+    say:"This removes the account, their broadcast lists and their WhatsApp login from this server. <b>Their own WhatsApp is not affected</b> — it simply stops being linked here. This cannot be undone." })) return;
+  try{
+    const r=await fetch("/api/users/delete",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({id:u.id})});
+    const d=await r.json();
+    if(!r.ok){ toast(d.error||"Could not delete that"); return; }
+    toast("Account deleted");
+    loadAccounts();
+  }catch{ toast("Could not delete that"); }
+}
+
+async function loadWorkers(){
+  const host=$("#acWorkers"); if(!host) return;
+  try{
+    const d=await (await fetch("/api/admin/workers")).json();
+    host.innerHTML="";
+    const rows=d.running||[];
+    host.append(el("span","hd", rows.length
+      ? `${rows.length} running · about ${d.estimatedMemoryGb} GB`
+      : "No customer sessions running"));
+    if(!rows.length){ host.append(el("span","none","They start when a customer opens the app.")); return; }
+    for(const w of rows){
+      const chip=el("span","chip");
+      chip.append(el("span","nm", w.name||w.email));
+      chip.append(el("span","sub", `${w.upMinutes} min`));
+      host.append(chip);
+    }
+  }catch{ host.innerHTML=""; host.append(el("span","none","Could not read the running sessions.")); }
+}
+
+// ---- The admin's second factor ---------------------------------------------
+function renderTwoFactor(){
+  const on=Boolean(ME.twoFactor);
+  $("#tfState").textContent = on ? "On — a code is needed to sign in" : "Off — your password alone signs you in";
+  $("#tfState").style.color = on ? "var(--good)" : "var(--warn)";
+  $("#tfOn").hidden = on;
+  $("#tfOff").hidden = !on;
+}
+
+$("#tfOn").onclick=async()=>{
+  try{
+    const r=await fetch("/api/admin/2fa",{method:"POST",headers:{"Content-Type":"application/json"},body:"{}"});
+    const d=await r.json();
+    if(!r.ok){ toast(d.error||"Could not start"); return; }
+    $("#tfSecret").textContent=d.secret;
+    $("#tfSetup").hidden=false;
+    $("#tfMsg").textContent="";
+    $("#tfCode").value="";
+    $("#tfCode").focus();
+  }catch{ toast("Could not start"); }
+};
+
+$("#tfCancel").onclick=()=>{ $("#tfSetup").hidden=true; };
+
+$("#tfConfirm").onclick=async()=>{
+  const code=$("#tfCode").value.replace(/\D/g,"");
+  if(code.length!==6){ $("#tfMsg").textContent="Six digits, from the app."; return; }
+  try{
+    const r=await fetch("/api/admin/2fa/confirm",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({code})});
+    const d=await r.json();
+    if(!r.ok){ $("#tfMsg").textContent=d.error||"That code is not right"; $("#tfCode").value=""; return; }
+    ME.twoFactor=true;
+    $("#tfSetup").hidden=true;
+    renderTwoFactor();
+    toast("Two-factor is on — you will need a code next time you sign in");
+  }catch{ $("#tfMsg").textContent="Could not confirm"; }
+};
+
+$("#tfOff").onclick=async()=>{
+  if(!await sheet({ title:"Turn off two-factor?", danger:true, confirm:"Turn it off",
+    say:"Your password alone would then open the broker's chats and the vessel matching. Only do this if you have lost the authenticator app." })) return;
+  try{
+    const r=await fetch("/api/admin/2fa",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({off:true})});
+    if(!r.ok){ toast("Could not turn it off"); return; }
+    ME.twoFactor=false;
+    renderTwoFactor();
+    toast("Two-factor is off");
+  }catch{ toast("Could not turn it off"); }
+};
+
+$("#pwSave").onclick=async()=>{
+  const current=$("#pwCur").value, next=$("#pwNew").value;
+  if(next.length<8){ $("#pwMsg").textContent="Use at least 8 characters."; return; }
+  try{
+    const r=await fetch("/api/me/password",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({current,next})});
+    const d=await r.json();
+    if(!r.ok){ $("#pwMsg").textContent=d.error||"Could not change it"; return; }
+    $("#pwCur").value=""; $("#pwNew").value="";
+    $("#pwMsg").textContent="";
+    toast("Password changed");
+  }catch{ $("#pwMsg").textContent="Could not change it"; }
+};
+
 let bcLists=[], bcListId="", bcMediaList=[], waReady=false;
 // Which list the ticks on screen belong to. Without this, a save that was
 // queued before switching lists wrote the new list's ticks over the old
@@ -1772,7 +2036,14 @@ async function loadC5(){
   const t=ticket("c5");
   $("#meta5").innerHTML='<span class="spin"></span>loading…';
   brief=null; $("#brief").textContent="Press Rebuild to generate."; $("#briefMeta").textContent="";
-  const d=await (await fetch(`/api/digest?from=${from}&to=${to}`)).json();
+  // A customer is refused this. Their C5 tab is hidden, so stop quietly rather
+  // than throwing where there is nothing to show.
+  let d=null;
+  try{
+    const r=await fetch(`/api/digest?from=${from}&to=${to}`);
+    if(!r.ok){ $("#meta5").textContent=""; return; }
+    d=await r.json();
+  }catch{ $("#meta5").textContent="could not load"; return; }
   if(stale("c5",t)) return; // a newer range is already loading
   renderC5(d);
 }
@@ -1803,9 +2074,18 @@ async function loadC3(){
 let c3Meta=null;
 let restoreWindowOnce=true;
 async function initC3Controls(asOf){
+  // Refused for a customer: the cargo and tonnage reading is not theirs. The
+  // page carries on, since the tab it belongs to is hidden from them anyway.
+  if(!CAN.c3) return;
   const t=ticket("c3meta");
   const q = asOf ? `?date=${asOf}` : "";
-  const meta = await (await fetch("/api/c3/meta"+q)).json();
+  let meta=null;
+  try{
+    const r=await fetch("/api/c3/meta"+q);
+    if(!r.ok) return;
+    meta=await r.json();
+  }catch{ return; }
+  if(!meta||!meta.first) return;
   if(stale("c3meta",t)) return; // a newer as-of date is already being set up
   c3Meta = meta;
   const d3=$("#d3");
@@ -1869,7 +2149,17 @@ function saveD5(){ prefs.set("d5from",$("#d5from").value); prefs.set("d5to",$("#
 
 let datesReady=false;
 async function initDates(){
-  const {dates}=await (await fetch("/api/dates")).json();
+  // A customer is refused this -- the days of the broker's chats are not
+  // theirs. The page must carry on rather than throw: everything below here
+  // belongs to tabs they cannot see anyway.
+  let dates=[];
+  try{
+    const r=await fetch("/api/dates");
+    if(!r.ok) return;
+    const d=await r.json();
+    if(!Array.isArray(d.dates)) return;
+    dates=d.dates;
+  }catch{ return; }
   const today=todayDubai();
   const latestWithData=[...dates].filter(d=>d<=today).pop()||today;
 

@@ -1,0 +1,187 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Arrow Cape · Privacy and data protection</title>
+<link rel="icon" type="image/png" href="/favicon.png">
+<link rel="apple-touch-icon" href="/icon-180.png">
+<meta name="theme-color" content="#0b1f3a">
+<meta name="description" content="What we hold, why we hold it, who else sees it, and how to have it deleted.">
+<style>
+  :root{--ink:#14161a;--dim:#5f6672;--faint:#8b929e;--line:#e4e6ea;--sunk:#f6f7f9;--accent:#1f6feb;
+    --accent-soft:#e8f0fe;--good:#1f8a53;--warn:#b8860b;--bad:#c0392b;--panel:#fff;--bg:#f4f5f7;
+    --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,monospace}
+  @media (prefers-color-scheme:dark){:root{--ink:#e9eaec;--dim:#9aa1ad;--faint:#6f7783;--line:#272c34;
+    --sunk:#1c2027;--accent:#4c8ffb;--accent-soft:#17243b;--good:#4cc38a;--warn:#d9a441;--bad:#e06c5f;
+    --panel:#171a1f;--bg:#0f1114}}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font:16px/1.65 -apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",Roboto,sans-serif;
+    -webkit-text-size-adjust:100%}
+  header{background:linear-gradient(180deg,#1d4f8f,#0b1f3a);color:#fff;
+    padding:calc(18px + env(safe-area-inset-top)) 20px 18px}
+  header .in{max-width:760px;margin:0 auto;display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+  header img{width:34px;height:34px;border-radius:9px}
+  header b{font-size:17px;letter-spacing:-.01em}
+  header nav{margin-left:auto;display:flex;gap:4px;flex-wrap:wrap}
+  header nav a{color:rgba(255,255,255,.82);text-decoration:none;font-size:13.5px;padding:5px 9px;border-radius:7px}
+  header nav a:hover,header nav a[aria-current]{background:rgba(255,255,255,.14);color:#fff}
+  main{max-width:760px;margin:0 auto;padding:28px 20px calc(56px + env(safe-area-inset-bottom))}
+  h1{font-size:27px;line-height:1.25;letter-spacing:-.02em;margin:0 0 6px}
+  .lede{font-size:17px;color:var(--dim);margin:0 0 28px}
+  h2{font-size:19px;letter-spacing:-.01em;margin:32px 0 10px;padding-top:18px;border-top:1px solid var(--line)}
+  h2:first-of-type{border-top:0;padding-top:0;margin-top:26px}
+  h3{font-size:15.5px;margin:20px 0 6px}
+  p,li{color:var(--ink)}
+  p{margin:0 0 14px}
+  ul,ol{margin:0 0 14px;padding-left:22px}
+  li{margin:0 0 7px}
+  a{color:var(--accent)}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:13px;padding:18px 20px;margin:0 0 18px}
+  .card h3{margin-top:0}
+  .card p:last-child,.card ul:last-child,.card ol:last-child{margin-bottom:0}
+  table{width:100%;border-collapse:collapse;margin:0 0 18px;font-size:15px}
+  th,td{text-align:left;padding:9px 11px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{font-size:12.5px;text-transform:uppercase;letter-spacing:.04em;color:var(--faint);font-weight:600}
+  .sub{color:var(--dim);font-size:14px}
+  .step{display:flex;gap:14px;margin:0 0 16px}
+  .step .n{flex:0 0 28px;height:28px;border-radius:50%;background:var(--accent);color:#fff;font-weight:600;
+    font-size:14px;display:flex;align-items:center;justify-content:center}
+  .step .b{flex:1;min-width:0}
+  .step .b b{display:block;margin-bottom:2px}
+  .cta{display:inline-block;background:var(--accent);color:#fff;text-decoration:none;font-weight:600;
+    padding:12px 20px;border-radius:11px;margin:4px 0}
+  .note{background:var(--accent-soft);border:1px solid var(--line);border-radius:11px;padding:14px 16px;margin:0 0 18px}
+  .note p:last-child{margin-bottom:0}
+  .tag{display:inline-block;font-size:12px;font-weight:600;padding:2px 8px;border-radius:999px;
+    background:var(--sunk);border:1px solid var(--line);color:var(--dim);margin-left:6px}
+  footer{border-top:1px solid var(--line);padding:22px 20px calc(30px + env(safe-area-inset-bottom));
+    color:var(--faint);font-size:13px}
+  footer .in{max-width:760px;margin:0 auto;display:flex;gap:14px;flex-wrap:wrap;align-items:center}
+  footer a{color:var(--dim);text-decoration:none}
+  footer a:hover{color:var(--ink)}
+  .addr{font-style:normal;color:var(--dim);font-size:14px;line-height:1.6}
+  @media (max-width:600px){
+    h1{font-size:23px} main{padding-top:22px} header nav a{padding:5px 7px;font-size:13px}
+    table{font-size:14px} th,td{padding:8px 7px}
+  }
+</style>
+</head>
+<body>
+  <header><div class="in">
+    <img src="/icon-180.png" alt=""><b>Arrow Cape</b>
+    <nav>
+      <a href="/tutorial">How it works</a>
+      <a href="/pricing">Pricing</a>
+      <a href="/support">Support</a>
+      <a href="/login">Sign in</a>
+    </nav>
+  </div></header>
+  <main>
+
+    <h1>Privacy and data protection</h1>
+    <p class="lede">What we hold, why, who else can see it, and how to have it deleted.</p>
+
+    <div class="note">
+      <p><b>The short version.</b> We hold your WhatsApp messages and contacts so the service can work.
+      We do not sell them, advertise against them, or use them to train anything. Each customer's data is
+      kept apart from every other customer's. Ask us to delete your account and it goes, along with your
+      lists and your message history.</p>
+    </div>
+
+    <h2>Who is responsible for your data</h2>
+    <div class="card">
+      <address class="addr">
+        <b>[COMPANY LEGAL NAME]</b><br>
+        [Street address]<br>
+        [City, postcode]<br>
+        [Country]<br>
+        Company number: [registration number]<br>
+        Data protection contact: <a href="mailto:[privacy@yourdomain.com]">[privacy@yourdomain.com]</a>
+      </address>
+      <p class="sub" style="margin-top:12px"><b>These details still need filling in.</b> Everything in
+      brackets is a placeholder. Replace it with the real company name, registered address and contact
+      address before this page is shown to customers.</p>
+    </div>
+
+    <h2>What we hold</h2>
+    <table>
+      <tr><th>What</th><th>Why</th><th>How long</th></tr>
+      <tr><td>Your email and name</td><td>To sign you in and to contact you</td><td>Until the account is deleted</td></tr>
+      <tr><td>Your password</td><td>Never stored. We keep a one-way scrypt hash with its own salt, from which the password cannot be recovered</td><td>Until the account is deleted</td></tr>
+      <tr><td>Your WhatsApp login session</td><td>To keep you connected without scanning a code every time</td><td>Until you unlink, or the account is deleted</td></tr>
+      <tr><td>Names and numbers of chats you add to a list</td><td>So a broadcast knows where to go</td><td>Until you remove them, or the account is deleted</td></tr>
+      <tr><td>Messages you broadcast, and their delivery marks</td><td>To show what was sent, and to let you recall it</td><td>Until the account is deleted</td></tr>
+      <tr><td>Images and files you attach</td><td>To send them</td><td>Deleted once sent; removed with the account</td></tr>
+      <tr><td>Messages from groups you choose to monitor</td><td>Only for accounts using the monitoring feature. Customers who only broadcast have none of this</td><td>Until the account is deleted</td></tr>
+      <tr><td>A sign-in cookie</td><td>To keep you signed in for 30 days. There is no advertising or analytics cookie of any kind</td><td>30 days</td></tr>
+    </table>
+
+    <h2>What we never do</h2>
+    <ul>
+      <li>Sell or rent your data, or share it for anyone else's marketing</li>
+      <li>Advertise against it, or place advertising or tracking cookies</li>
+      <li>Use your messages or contacts to train machine-learning models</li>
+      <li>Read your chats except where needed to run or fix the service</li>
+      <li>Message anyone on your behalf unless you pressed Send, or posted in a broadcast group you set up</li>
+    </ul>
+
+    <h2>Keeping customers apart</h2>
+    <p>Each account's WhatsApp runs in its own process, with its own storage, named for that account.
+    One customer's session holds no path to another's data, and the administrator's own monitoring data sits
+    outside every customer's reach. Access is decided before any request is handled, and it denies by default.</p>
+    <p class="sub">That separation is enforced by the software and covered by automated tests that try to
+    cross it, not by policy alone.</p>
+
+    <h2>Who else is involved</h2>
+    <table>
+      <tr><th>Who</th><th>What for</th><th>What they see</th></tr>
+      <tr><td>Our hosting provider</td><td>Running the servers and storing the data</td><td>Encrypted storage of everything above. [Name the provider and its region here.]</td></tr>
+      <tr><td>WhatsApp (Meta)</td><td>Delivering your messages</td><td>Your messages, as they would if you sent them from your own phone. Their terms apply to your account.</td></tr>
+      <tr><td>Anthropic</td><td>Summarising monitored groups, for the administrator's account only</td><td>Only text from monitored groups. <b>No customer broadcast data is sent to any AI service.</b></td></tr>
+    </table>
+
+    <h2>Your rights</h2>
+    <p>You can ask us to show you what we hold, correct it, delete it, or send it to you in a portable form.
+    Write to the contact address above and we will answer within 30 days.</p>
+    <p>You can delete most of it yourself: unlinking your WhatsApp removes the session, removing a chat from a
+    list removes it, and asking us to delete your account removes everything.</p>
+
+    <h2>Security</h2>
+    <ul>
+      <li>Everything travels over HTTPS</li>
+      <li>Passwords are stored only as salted scrypt hashes</li>
+      <li>Administrator accounts require a second factor from an authenticator app</li>
+      <li>Sign-in attempts are rate limited</li>
+      <li>Suspending an account signs it out immediately, not when its session expires</li>
+    </ul>
+    <p class="sub">No service can promise it will never be breached. If one affects you, we will tell you
+    what happened and what to do, without waiting to be asked.</p>
+
+    <h2>A word about WhatsApp</h2>
+    <div class="note">
+      <p>This service connects to WhatsApp by driving WhatsApp Web, the same interface you would use on a
+      laptop. It is not built on WhatsApp's official Business API and is not endorsed by or affiliated with
+      WhatsApp or Meta.</p>
+      <p>Your use of WhatsApp remains governed by their terms, and automated or bulk messaging can lead them
+      to restrict an account. That is why we pace every send and cap the size of a broadcast. The risk is
+      real and it is yours; we would rather say so here than in the small print.</p>
+    </div>
+
+    <h2>Changes</h2>
+    <p>If this page changes in a way that affects you, we will tell you before it takes effect.</p>
+    <p class="sub"><b>This page describes what the software actually does.</b> It has not been reviewed by a
+    lawyer. Have it checked before relying on it, particularly if customers are in the EU or UK.</p>
+
+  </main>
+  <footer><div class="in">
+    <span>Arrow Cape Broadcast</span>
+    <a href="/tutorial">How it works</a>
+    <a href="/pricing">Pricing</a>
+    <a href="/support">Support</a>
+    <a href="/privacy">Privacy</a>
+    <a href="/terms">Terms</a>
+  </div></footer>
+</body>
+</html>

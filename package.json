@@ -12,7 +12,8 @@
     "test:ui": "node src/test-ui.js",
     "test:lifecycle": "node src/test-lifecycle.js",
     "c3": "node src/c3/cli.js",
-    "c3:compare": "node src/c3/compare.js"
+    "c3:compare": "node src/c3/compare.js",
+    "test:ui:accounts": "node src/test-ui-accounts.js"
   },
   "keywords": [],
   "author": "",

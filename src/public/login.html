@@ -13,53 +13,169 @@
 <meta name="apple-mobile-web-app-title" content="Arrow Cape">
 <meta name="theme-color" content="#0b1f3a">
 <style>
-  :root{--ink:#14161a;--dim:#5f6672;--line:#e4e6ea;--accent:#1f6feb;--bad:#c0392b;--panel:#fff}
-  @media (prefers-color-scheme:dark){:root{--ink:#e9eaec;--dim:#9aa1ad;--line:#2b313a;--accent:#4c8ffb;--bad:#e06c5f;--panel:#171a1f}}
+  :root{--ink:#14161a;--dim:#5f6672;--line:#e4e6ea;--sunk:#f6f7f9;--accent:#1f6feb;--accent-soft:#e8f0fe;
+    --bad:#c0392b;--good:#1f8a53;--warn:#b8860b;--panel:#fff;
+    --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,monospace}
+  @media (prefers-color-scheme:dark){:root{--ink:#e9eaec;--dim:#9aa1ad;--line:#2b313a;--sunk:#1c2027;
+    --accent:#4c8ffb;--accent-soft:#17243b;--bad:#e06c5f;--good:#4cc38a;--warn:#d9a441;--panel:#171a1f}}
   *{box-sizing:border-box}
-  html,body{height:100%}
+  html,body{min-height:100%}
   body{margin:0;font:15px/1.5 -apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",Roboto,sans-serif;color:var(--ink);
     background:radial-gradient(120% 80% at 50% 0%,#1d4f8f 0%,#0b1f3a 55%,#07111f 100%);
     display:flex;align-items:center;justify-content:center;
     padding:max(24px,env(safe-area-inset-top)) 20px max(24px,env(safe-area-inset-bottom))}
-  .card{width:100%;max-width:360px;background:var(--panel);border-radius:20px;padding:30px 26px 26px;
+  .card{width:100%;max-width:380px;background:var(--panel);border-radius:20px;padding:30px 26px 24px;
     box-shadow:0 20px 60px rgba(0,0,0,.35)}
-  .logo{width:64px;height:64px;border-radius:16px;display:block;margin:0 auto 14px;box-shadow:0 6px 18px rgba(11,31,58,.35)}
-  h1{margin:0;text-align:center;font-size:22px;letter-spacing:-.01em}
+  .logo{width:60px;height:60px;border-radius:15px;display:block;margin:0 auto 14px;box-shadow:0 6px 18px rgba(11,31,58,.35)}
+  h1{margin:0;text-align:center;font-size:21px;letter-spacing:-.01em}
   p.sub{margin:4px 0 22px;text-align:center;color:var(--dim);font-size:14px}
-  label{display:block;font-size:13px;color:var(--dim);margin-bottom:6px}
-  input{width:100%;font:inherit;font-size:17px;padding:13px 14px;border:1px solid var(--line);border-radius:12px;
-    background:transparent;color:var(--ink);outline:none}
-  input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(31,111,235,.18)}
-  button{width:100%;margin-top:14px;font:inherit;font-size:17px;font-weight:600;padding:13px;border:0;border-radius:12px;
+  label{display:block;font-size:13px;color:var(--dim);margin:0 0 6px}
+  input{width:100%;font:inherit;font-size:17px;padding:12px 14px;border:1px solid var(--line);border-radius:12px;
+    background:transparent;color:var(--ink);outline:none;margin-bottom:14px}
+  input:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
+  /* A six-digit code is read back from a phone one character at a time. */
+  input.code{font-family:var(--mono);font-size:26px;letter-spacing:.3em;text-align:center;padding:14px 10px}
+  button{width:100%;font:inherit;font-size:17px;font-weight:600;padding:13px;border:0;border-radius:12px;
     background:var(--accent);color:#fff;cursor:pointer}
-  button:disabled{opacity:.6}
-  .err{min-height:20px;margin-top:10px;text-align:center;color:var(--bad);font-size:14px}
+  button:disabled{opacity:.6;cursor:default}
+  button.quiet{background:transparent;color:var(--dim);font-weight:500;font-size:14px;padding:10px;margin-top:4px}
+  .msg{min-height:20px;margin-top:12px;text-align:center;font-size:14px;line-height:1.45}
+  .msg.bad{color:var(--bad)}
+  .msg.ok{color:var(--good)}
+  .note{margin:14px 0 0;padding:11px 13px;border-radius:10px;background:var(--sunk);border:1px solid var(--line);
+    font-size:13.5px;line-height:1.5;color:var(--dim)}
+  .foot{margin:18px 0 0;text-align:center;font-size:13.5px;color:var(--dim)}
+  .foot a{color:var(--accent);text-decoration:none}
+  .foot a:hover{text-decoration:underline}
+  .links{margin:20px 0 0;text-align:center;font-size:12.5px;color:var(--dim)}
+  .links a{color:var(--dim);text-decoration:none;margin:0 6px}
+  .links a:hover{color:var(--ink)}
+  [hidden]{display:none !important}
 </style>
 </head>
 <body>
-  <form class="card" id="f">
+  <form class="card" id="card" autocomplete="on">
     <img class="logo" src="/icon-180.png" alt="">
     <h1>Arrow Cape</h1>
-    <p class="sub">Capesize monitor · sign in</p>
-    <label for="pw">Password</label>
-    <input id="pw" type="password" autocomplete="current-password" autofocus required>
-    <button id="go">Sign in</button>
-    <div class="err" id="err"></div>
+    <p class="sub" id="sub">Sign in to broadcast</p>
+
+    <div id="step1">
+      <label for="email">Email</label>
+      <input id="email" type="email" autocomplete="username" autocapitalize="off" spellcheck="false" placeholder="you@company.com">
+      <label for="pw">Password</label>
+      <input id="pw" type="password" autocomplete="current-password" required>
+      <button id="go">Sign in</button>
+    </div>
+
+    <!-- Only the admin reaches this, and only once 2FA is switched on. -->
+    <div id="step2" hidden>
+      <label for="code">Six-digit code from your authenticator app</label>
+      <input id="code" class="code" type="text" inputmode="numeric" autocomplete="one-time-code"
+             maxlength="6" pattern="[0-9]*" placeholder="000000">
+      <button id="verify">Verify</button>
+      <button type="button" class="quiet" id="back">Use a different account</button>
+    </div>
+
+    <div class="msg" id="msg"></div>
+    <div class="note" id="note" hidden></div>
+
+    <p class="foot" id="foot">No account? <a href="/register">Request one</a></p>
+    <p class="links">
+      <a href="/tutorial">How it works</a> ·
+      <a href="/pricing">Pricing</a> ·
+      <a href="/support">Support</a> ·
+      <a href="/privacy">Privacy</a>
+    </p>
   </form>
 <script>
-  const f = document.getElementById("f"), err = document.getElementById("err"), go = document.getElementById("go");
-  f.onsubmit = async (e) => {
+  const $ = (s) => document.querySelector(s);
+  const msg = (text, kind) => { const m = $("#msg"); m.textContent = text || ""; m.className = "msg" + (kind ? " " + kind : ""); };
+  let ticket = "";
+
+  // Arriving here because an account is not usable yet says so plainly, rather
+  // than leaving someone to guess why their password stopped working.
+  {
+    const status = new URLSearchParams(location.search).get("status");
+    if (status === "pending") {
+      $("#note").hidden = false;
+      $("#note").textContent = "Your account is waiting to be approved. You will be able to sign in once it has been.";
+    } else if (status === "suspended") {
+      $("#note").hidden = false;
+      $("#note").textContent = "This account has been suspended. Get in touch and we will sort it out.";
+    }
+  }
+
+  function showCodeStep() {
+    $("#step1").hidden = true;
+    $("#step2").hidden = false;
+    $("#foot").hidden = true;
+    $("#sub").textContent = "One more step";
+    msg("Open your authenticator app and enter the current code.");
+    setTimeout(() => $("#code").focus(), 50);
+  }
+
+  function showPasswordStep() {
+    ticket = "";
+    $("#step2").hidden = true;
+    $("#step1").hidden = false;
+    $("#foot").hidden = false;
+    $("#sub").textContent = "Sign in to broadcast";
+    $("#code").value = "";
+    msg("");
+    $("#email").focus();
+  }
+  $("#back").onclick = showPasswordStep;
+
+  $("#card").onsubmit = async (e) => {
     e.preventDefault();
-    go.disabled = true; err.textContent = "";
+    return ticket ? verify() : signIn();
+  };
+
+  async function signIn() {
+    const go = $("#go");
+    go.disabled = true; msg("");
     try {
-      const r = await fetch("/api/login", { method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ password: document.getElementById("pw").value }) });
+      const r = await fetch("/api/login", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        // The email is optional on purpose: a deployment that predates accounts
+        // signs its admin in with the password alone.
+        body: JSON.stringify({ email: $("#email").value.trim(), password: $("#pw").value }),
+      });
+      const d = await r.json().catch(() => ({}));
+      if (r.ok && d.need2fa) { ticket = d.ticket; showCodeStep(); return; }
+      if (r.ok) { location.replace("/"); return; }
+      msg(d.error || "Could not sign in", "bad");
+    } catch { msg("Could not reach the server", "bad"); }
+    go.disabled = false;
+  }
+
+  async function verify() {
+    const btn = $("#verify");
+    btn.disabled = true; msg("");
+    try {
+      const r = await fetch("/api/login/2fa", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ticket, code: $("#code").value }),
+      });
       const d = await r.json().catch(() => ({}));
       if (r.ok) { location.replace("/"); return; }
-      err.textContent = d.error || "Wrong password";
-    } catch { err.textContent = "Could not reach the server"; }
-    go.disabled = false;
-  };
+      msg(d.error || "That code is not right", "bad");
+      // A code is only good for thirty seconds; clear it so the next attempt
+      // is not the stale one.
+      $("#code").value = "";
+      $("#code").focus();
+      if (/sign in again/i.test(d.error || "")) showPasswordStep();
+    } catch { msg("Could not reach the server", "bad"); }
+    btn.disabled = false;
+  }
+
+  // Six digits and nothing else, and submit as soon as they are all in.
+  $("#code").addEventListener("input", (e) => {
+    e.target.value = e.target.value.replace(/\D/g, "").slice(0, 6);
+    if (e.target.value.length === 6) verify();
+  });
+
+  $("#email").focus();
 </script>
 </body>
 </html>
