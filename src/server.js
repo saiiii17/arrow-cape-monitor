@@ -7,7 +7,14 @@ const { buildRundown } = require("./c3");
 const { matchAll } = require("./c3/match");
 const { PROVIDER: C3_PROVIDER } = require("./c3/llm");
 const live = require("./live");
+const crypto = require("crypto");
 const auth = require("./auth");
+const authz = require("./authz");
+const users = require("./users");
+
+// Secrets mid-enrolment: held in memory only, so a 2FA setup that is abandoned
+// leaves nothing behind.
+const pendingTotp = new Map();
 
 const PORT = Number(process.env.PORT || 4321);
 const PUBLIC_DIR = path.join(__dirname, "public");
@@ -46,43 +53,169 @@ function readBody(req) {
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://localhost:${PORT}`);
 
-  // ---- sign-in -------------------------------------------------------------
-  // Everything below is behind the password when APP_PASSWORD is set.
+  // ---- who is asking -------------------------------------------------------
+  // Accounts, not one shared password. the owner is the admin and sees everything;
+  // everybody else is a customer who gets the broadcast tools and nothing more.
+  // authz.js decides, from the path alone, before any handler runs.
   if (url.pathname === "/healthz") return json(res, 200, { ok: true });
-  if (url.pathname === "/login") {
-    if (!auth.enabled()) { res.writeHead(302, { Location: "/" }).end(); return; }
+
+  const ip = String(req.headers["x-forwarded-for"] || req.socket.remoteAddress || "").split(",")[0].trim();
+
+  for (const [route, file] of [["/login", "login.html"], ["/register", "register.html"],
+    ["/tutorial", "tutorial.html"], ["/pricing", "pricing.html"], ["/privacy", "privacy.html"],
+    ["/terms", "terms.html"], ["/support", "support.html"]]) {
+    if (url.pathname !== route) continue;
+    if (route === "/login" && !auth.enabled()) { res.writeHead(302, { Location: "/" }).end(); return; }
+    const full = path.join(PUBLIC_DIR, file);
+    if (!fs.existsSync(full)) break;
     res.writeHead(200, { "Content-Type": "text/html", "Cache-Control": "no-store" });
-    fs.createReadStream(path.join(PUBLIC_DIR, "login.html")).pipe(res);
+    fs.createReadStream(full).pipe(res);
     return;
   }
+
   if (url.pathname === "/api/login" && req.method === "POST") {
-    const ip = String(req.headers["x-forwarded-for"] || req.socket.remoteAddress || "").split(",")[0].trim();
     if (!auth.allowAttempt(ip)) return json(res, 429, { error: "Too many attempts — wait a minute" });
-    const { password } = await readBody(req);
-    if (!auth.checkPassword(password)) return json(res, 401, { error: "Wrong password" });
-    res.writeHead(200, { "Content-Type": "application/json", "Set-Cookie": auth.sessionCookie(req) });
-    res.end(JSON.stringify({ ok: true }));
+    const { email, password } = await readBody(req);
+    // The deployed site predates accounts: its sign-in page sends a password and
+    // no address. That keeps working -- the password alone signs the admin in --
+    // so a deploy does not lock the owner out of his own dashboard.
+    const legacy = !String(email || "").trim() && String(process.env.APP_PASSWORD || "").trim();
+    const r = legacy
+      ? (() => {
+        const a = Buffer.from(crypto.createHash("sha256").update(String(password || "")).digest());
+        const b = Buffer.from(crypto.createHash("sha256").update(String(process.env.APP_PASSWORD)).digest());
+        if (!crypto.timingSafeEqual(a, b)) return { ok: false, reason: "Wrong password" };
+        const admin = users.findByEmail(process.env.ADMIN_EMAIL || users.LEGACY_ADMIN_EMAIL);
+        return admin ? { ok: true, user: admin } : { ok: false, reason: "No admin account on this server" };
+      })()
+      : users.authenticate(email, password);
+    if (!r.ok) return json(res, 401, { error: r.reason });
+    // The admin's password alone is not enough once 2FA is on: it buys a short
+    // ticket that only a current code can redeem.
+    if (users.needsTotp(r.user)) {
+      return json(res, 200, { need2fa: true, ticket: auth.makeTicket(r.user) });
+    }
+    users.touchLogin(r.user.id);
+    res.writeHead(200, { "Content-Type": "application/json", "Set-Cookie": auth.sessionCookie(req, r.user) });
+    res.end(JSON.stringify({ ok: true, role: r.user.role }));
     return;
   }
+
+  if (url.pathname === "/api/login/2fa" && req.method === "POST") {
+    // Codes are rationed harder than passwords: six digits is a small space.
+    if (!auth.allowAttempt(ip, "2fa", 5)) return json(res, 429, { error: "Too many codes — wait a minute" });
+    const { ticket, code } = await readBody(req);
+    const uid = auth.readTicket(ticket);
+    if (!uid) return json(res, 401, { error: "That took too long — sign in again" });
+    const u = users.findById(uid);
+    if (!u || !users.verifyTotp(users.totpSecretOf(uid), code)) {
+      return json(res, 401, { error: "That code is not right" });
+    }
+    users.touchLogin(u.id);
+    res.writeHead(200, { "Content-Type": "application/json", "Set-Cookie": auth.sessionCookie(req, u) });
+    res.end(JSON.stringify({ ok: true, role: u.role }));
+    return;
+  }
+
+  // Anyone may ask for an account; nobody gets in until the owner approves it.
+  if (url.pathname === "/api/register" && req.method === "POST") {
+    if (!auth.enabled()) return json(res, 400, { error: "Accounts are not in use on this server" });
+    if (!auth.allowAttempt(ip, "register", 5)) return json(res, 429, { error: "Too many attempts — wait a minute" });
+    const { email, password, name } = await readBody(req);
+    try {
+      users.createUser({ email, password, name, role: "user", status: "pending" });
+      return json(res, 200, { ok: true, pending: true });
+    } catch (e) {
+      return json(res, 400, { error: e.message });
+    }
+  }
+
   if (url.pathname === "/api/logout") {
     res.writeHead(302, { Location: auth.enabled() ? "/login" : "/", "Set-Cookie": auth.clearCookie() }).end();
     return;
   }
-  if (auth.enabled() && !auth.isPublic(url.pathname) && !auth.isLoggedIn(req)) {
-    if (url.pathname.startsWith("/api/")) return json(res, 401, { error: "Sign in required" });
-    res.writeHead(302, { Location: "/login" }).end();
+
+  // The gate. One decision, taken from the path, for every request below.
+  const who = auth.whoami(req);
+  const verdict = authz.decide(url.pathname, who);
+  if (!verdict.allow) {
+    const api = url.pathname.startsWith("/api/");
+    if (verdict.why === "signin") {
+      if (api) return json(res, 401, { error: "Sign in required" });
+      res.writeHead(302, { Location: "/login" }).end();
+      return;
+    }
+    if (verdict.why === "inactive") {
+      const msg = who && who.status === "pending"
+        ? "This account is waiting to be approved"
+        : "This account has been suspended";
+      if (api) return json(res, 403, { error: msg });
+      res.writeHead(302, { Location: "/login?status=" + (who ? who.status : "") }).end();
+      return;
+    }
+    // Forbidden: a customer reaching for something that is not theirs. Nothing
+    // about it is described, and it is noted.
+    console.warn(`  [authz] ${who ? who.email : "?"} was refused ${url.pathname}`);
+    if (api) return json(res, 403, { error: "Not available on this account" });
+    res.writeHead(302, { Location: "/" }).end();
     return;
   }
+  // A public path passes the gate with nobody signed in, so this must tolerate
+  // a null account rather than assume one.
+  const isAdmin = Boolean(who && who.role === "admin");
+
   if (url.pathname === "/api/session") {
-    // Build stamp = when the page file was last written. Shown in the header so
-    // "did my phone actually get the new version?" is answerable at a glance
-    // instead of by guesswork.
-    let build = "?";
-    try {
-      const t = new Date(fs.statSync(path.join(PUBLIC_DIR, "index.html")).mtime);
-      build = `${String(t.getDate()).padStart(2, "0")}/${String(t.getMonth() + 1).padStart(2, "0")} ${String(t.getHours()).padStart(2, "0")}:${String(t.getMinutes()).padStart(2, "0")}`;
-    } catch { /* leave as ? */ }
-    return json(res, 200, { auth: auth.enabled(), build });
+    if (!who) return json(res, 401, { error: "Sign in required" });
+    return json(res, 200, {
+      auth: auth.enabled(),
+      user: { email: who.email, name: who.name, role: who.role, twoFactor: Boolean(who.twoFactor) },
+      // What the page may draw. The server has already decided; this only saves
+      // the page from rendering a tab that would be refused anyway.
+      can: { broadcast: true, accounts: isAdmin, c5: isAdmin, c3: isAdmin, matches: isAdmin, history: isAdmin },
+    });
+  }
+
+  // ---- accounts, for the admin --------------------------------------------
+  if (url.pathname === "/api/users") return json(res, 200, { users: users.list() });
+
+  if (url.pathname === "/api/users/status" && req.method === "POST") {
+    const { id, status } = await readBody(req);
+    try { return json(res, 200, { user: users.setStatus(id, status) }); }
+    catch (e) { return json(res, 400, { error: e.message }); }
+  }
+
+  if (url.pathname === "/api/users/delete" && req.method === "POST") {
+    const { id } = await readBody(req);
+    try { users.remove(id); return json(res, 200, { ok: true }); }
+    catch (e) { return json(res, 400, { error: e.message }); }
+  }
+
+  if (url.pathname === "/api/me/password" && req.method === "POST") {
+    const { current, next } = await readBody(req);
+    const check = users.authenticate(who.email, current);
+    if (!check.ok) return json(res, 401, { error: "Your current password is not right" });
+    try { users.setPassword(who.id, next); return json(res, 200, { ok: true }); }
+    catch (e) { return json(res, 400, { error: e.message }); }
+  }
+
+  // ---- the admin's second factor ------------------------------------------
+  if (url.pathname === "/api/admin/2fa" && req.method === "POST") {
+    const { off } = await readBody(req);
+    if (off) { users.disableTotp(who.id); return json(res, 200, { ok: true, twoFactor: false }); }
+    // Handed over once, while enrolling, and never readable again afterwards.
+    const secret = users.newTotpSecret();
+    pendingTotp.set(who.id, { secret, at: Date.now() });
+    return json(res, 200, { secret, uri: users.totpUri(secret, who.email) });
+  }
+
+  if (url.pathname === "/api/admin/2fa/confirm" && req.method === "POST") {
+    const { code } = await readBody(req);
+    const p = pendingTotp.get(who.id);
+    if (!p || Date.now() - p.at > 10 * 60_000) return json(res, 400, { error: "Start again — that took too long" });
+    if (!users.verifyTotp(p.secret, code)) return json(res, 400, { error: "That code is not right — check the app and try again" });
+    users.enableTotp(who.id, p.secret);
+    pendingTotp.delete(who.id);
+    return json(res, 200, { ok: true, twoFactor: true });
   }
 
   if (url.pathname === "/api/dates") {
@@ -555,8 +688,23 @@ server.listen(PORT, "0.0.0.0", () => {
   // Said plainly at boot: an open deployment looks identical to a protected
   // one until someone opens the URL, and this one can broadcast from the
   // linked WhatsApp account.
-  console.log(auth.enabled()
-    ? "  sign-in: ON (APP_PASSWORD set)"
-    : "  sign-in: OFF — anyone with the URL can read the chats and broadcast. Set APP_PASSWORD to protect it.");
+  // The admin exists from the first boot, so the site is never up without an
+  // owner who could approve accounts.
+  let admin = null;
+  try { admin = users.ensureAdmin(); } catch (e) { console.error("  could not create the admin account:", e.message); }
+  if (auth.enabled()) {
+    const all = users.list();
+    const waiting = all.filter((u) => u.status === "pending").length;
+    console.log(`  sign-in: ON · ${all.length} account${all.length === 1 ? "" : "s"}` +
+      (waiting ? ` · ${waiting} waiting for approval` : ""));
+    if (admin) {
+      console.log(`  admin: ${admin.email}${admin.twoFactor ? " · 2FA on" : " · 2FA off (turn it on from the app)"}`);
+    } else if (!String(process.env.ADMIN_EMAIL || "").trim()) {
+      console.log("  no ADMIN_EMAIL set — nobody can approve new accounts until one exists");
+    }
+  } else {
+    console.log("  sign-in: OFF — anyone with the URL can read the chats and broadcast.");
+    console.log("  set ADMIN_EMAIL and ADMIN_PASSWORD to turn accounts on.");
+  }
   console.log(`  ${dates.length} days loaded (${dates[0]} .. ${dates[dates.length - 1]})\n`);
 });
