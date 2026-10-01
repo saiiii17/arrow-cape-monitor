@@ -714,6 +714,30 @@ server.listen(PORT, "0.0.0.0", () => {
   // Said plainly at boot: an open deployment looks identical to a protected
   // one until someone opens the URL, and this one can broadcast from the
   // linked WhatsApp account.
+  // On a container, anything written outside the mounted volume is lost on the
+  // next deploy. WWEBJS_PATH is the dangerous one: its default sits beside the
+  // code, not under data/, so forgetting it costs the WhatsApp login every time
+  // the service restarts -- and that looks like WhatsApp logging you out.
+  {
+    const vol = process.env.DATA_VOLUME_PATH || "/app/data";
+    const inContainer = fs.existsSync("/.dockerenv") || Boolean(process.env.RAILWAY_ENVIRONMENT) || Boolean(process.env.RENDER);
+    if (inContainer && fs.existsSync(vol)) {
+      const wrong = Object.entries({
+        WWEBJS_PATH: process.env.WWEBJS_PATH || path.join(__dirname, "..", ".wwebjs_auth"),
+        USERS_FILE: process.env.USERS_FILE || path.join(__dirname, "..", "data", "users.json"),
+        USERS_DATA_DIR: process.env.USERS_DATA_DIR || path.join(__dirname, "..", "data", "customers"),
+        LIVE_STORE_DIR: process.env.LIVE_STORE_DIR || path.join(__dirname, "..", "data", "live"),
+      }).filter(([, v]) => !path.resolve(v).startsWith(path.resolve(vol)));
+      if (wrong.length) {
+        console.log("");
+        console.log(`  ⚠  these are NOT on the persistent volume (${vol}) and will be lost on the next deploy:`);
+        for (const [k, v] of wrong) console.log(`       ${k} = ${v}`);
+        console.log("     Set them to paths under the volume. A lost WWEBJS_PATH means re-scanning the QR every deploy.");
+        console.log("");
+      }
+    }
+  }
+
   // The admin exists from the first boot, so the site is never up without an
   // owner who could approve accounts.
   let admin = null;
