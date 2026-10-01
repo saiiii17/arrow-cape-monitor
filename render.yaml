@@ -14,7 +14,9 @@ services:
     name: arrow-cape-monitor
     runtime: docker
     plan: standard          # 1 CPU / 2 GB
-    healthCheckPath: /api/dates
+    # /healthz is public and always will be. /api/dates needs an admin session
+    # now, so a check against it would be refused and the deploy marked failed.
+    healthCheckPath: /healthz
     disk:
       name: data
       mountPath: /app/data
@@ -43,3 +45,24 @@ services:
         sync: false     # set in the Render dashboard
       - key: C3_GROUP
         sync: false     # set in the Render dashboard
+      # Accounts. ADMIN_EMAIL and ADMIN_PASSWORD create the owner's account on the
+      # first boot; after that the password is changed in the app, not here.
+      # Without them the older APP_PASSWORD still works and signs the admin in.
+      - key: ADMIN_EMAIL
+        sync: false     # set in the Render dashboard
+      - key: ADMIN_PASSWORD
+        sync: false     # only read when the account is first created
+      # Signs session cookies. Changing it signs everyone out, which is what
+      # should happen when a secret is rotated.
+      - key: SESSION_SECRET
+        sync: false     # set in the Render dashboard
+      # Everything a customer's WhatsApp writes lives under here, one folder per
+      # account, on the same persistent disk.
+      - key: USERS_FILE
+        value: /app/data/users.json
+      - key: USERS_DATA_DIR
+        value: /app/data/customers
+      # How long a customer's browser may sit unused before it is closed. Each
+      # one costs well over a gigabyte, and closing it does not unlink them.
+      - key: WORKER_IDLE_MINUTES
+        value: 30

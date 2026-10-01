@@ -146,6 +146,27 @@ const SHARED = authz.SIGNED_IN;
     assert.strictEqual(authz.decide("/api/digest", CUSTOMER).why, "forbidden");
   });
 
+  console.log("\nwhat the hosts check");
+
+  await test("every health check a host uses is reachable without signing in", () => {
+    // A health check that needs an account is refused, and the platform marks
+    // the deploy as failed. /api/dates used to be open; it is the owner's now.
+    const files = ["railway.json", "render.yaml"];
+    for (const f of files) {
+      const full = path.join(__dirname, "..", f);
+      if (!fs.existsSync(full)) continue;
+      const src = fs.readFileSync(full, "utf8");
+      for (const m of src.matchAll(/healthcheckPath"?\s*[:=]\s*"([^"]+)"/g)) {
+        assert.strictEqual(authz.levelFor(m[1]), "public",
+          `${f} checks ${m[1]}, which needs an account — the deploy would fail`);
+      }
+      for (const m of src.matchAll(/healthCheckPath:\s*(\S+)/g)) {
+        assert.strictEqual(authz.levelFor(m[1].replace(/['"]/g, "")), "public",
+          `${f} checks ${m[1]}, which needs an account — the deploy would fail`);
+      }
+    }
+  });
+
   console.log("\naccounts");
 
   await test("a password is never stored, only a slow hash of it", () => {
