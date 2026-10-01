@@ -687,6 +687,10 @@ function applyRole(){
   show("#tab-c3", CAN.c3);
   show("#tab-mx", CAN.matches);
   show("#tab-ac", CAN.accounts);
+  // Copy, Download and Send to WhatsApp act on the broker's daily digest. They
+  // are refused for a customer anyway, but a button that does nothing but fail
+  // is worse than no button.
+  for (const sel of ["#refresh", "#copy", "#download", "#send"]) show(sel, CAN.c5);
   // A customer's WhatsApp tab is theirs: linking their own number, not
   // choosing which of the broker's groups to capture.
   const hist = document.querySelector("#waHistoryOnly");

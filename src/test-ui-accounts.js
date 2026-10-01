@@ -5,7 +5,7 @@
 // dashboard has always been tested. This one needs an admin and a customer.
 const puppeteer = require("puppeteer");
 const URL = process.env.UI_TEST_URL || "http://localhost:4328";
-const ADMIN = { email: "owner@test.com", password: "adminpass123" };
+const ADMIN = { email: process.env.TEST_ADMIN_EMAIL || "owner@test.com", password: process.env.TEST_ADMIN_PASSWORD || "adminpass123" };
 const CUST = { email: "broker@test.com", password: "brokerpass1" };
 
 let pass = 0, fail = 0;
@@ -38,6 +38,22 @@ const wait = (ms) => new Promise(r => setTimeout(r, ms));
     await p.type("#pw", who.password);
     await p.click("#go");
     await wait(1800);
+  }
+
+  // Seed what the later checks need, rather than depending on a server someone
+  // else prepared: register the customer and approve them through the API.
+  {
+    const post = (path, body, cookie) => fetch(URL + path, {
+      method: "POST", redirect: "manual",
+      headers: { "Content-Type": "application/json", ...(cookie ? { cookie } : {}) },
+      body: JSON.stringify(body || {}),
+    });
+    await post("/api/register", { email: CUST.email, password: CUST.password, name: "A Broker" });
+    const r = await post("/api/login", ADMIN);
+    const admin = String(r.headers.get("set-cookie") || "").split(";")[0];
+    const d = await (await fetch(URL + "/api/users", { headers: { cookie: admin } })).json();
+    const c = (d.users || []).find(u => u.email === CUST.email);
+    if (c && c.status !== "active") await post("/api/users/status", { id: c.id, status: "active" }, admin);
   }
 
   console.log("\nthe public pages");
@@ -132,6 +148,40 @@ const wait = (ms) => new Promise(r => setTimeout(r, ms));
        await p.evaluate(() => { const e = document.querySelector("#waHistoryOnly"); return !e || e.hidden; }));
     ok("their name is in the header",
        !await p.$eval("#whoami", e => e.hidden));
+
+    // These act on the broker's daily digest. A customer is refused them, so a
+    // button that can only fail should not be on their screen.
+    const adminButtons = await p.evaluate(() =>
+      ["#refresh", "#copy", "#download", "#send"]
+        .filter(sel => { const e = document.querySelector(sel); return e && !e.hidden; }));
+    ok("the digest buttons are not shown to a customer",
+       adminButtons.length === 0, `still visible: ${adminButtons.join(", ")}`);
+
+    // Linking their own WhatsApp is theirs, and must work. This starts a real
+    // Chromium in their own worker, so it is given time.
+    await p.click("#tab-wa");
+    await wait(1200);
+    await p.click("#waStart");
+    let qr = { shown: false, big: false, status: "" };
+    for (let i = 0; i < 20; i++) {
+      await wait(3000);
+      qr = await p.evaluate(() => {
+        const img = document.querySelector("#waQr img");
+        return {
+          shown: Boolean(img),
+          big: img ? img.offsetWidth > 100 : false,
+          status: (document.querySelector("#waSteps") || {}).innerText ? "" : "",
+        };
+      });
+      if (qr.shown && qr.big) break;
+    }
+    ok("a customer is given a QR code to scan", qr.shown && qr.big, JSON.stringify(qr));
+
+    // And the instructions must be theirs, not the broker's.
+    const steps = await p.evaluate(() => document.body.innerText);
+    ok("they are not told to enter C5 and C3 group names",
+       !/C5 and C3 group names/i.test(steps),
+       "the admin's instruction reached a customer");
     ok("no page errors for a customer", errs.length === 0, errs.slice(0, 3).join(" | "));
     await ctx.close();
   }

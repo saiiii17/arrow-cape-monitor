@@ -71,6 +71,9 @@ function envFor(id, port, secret) {
     GROQ_API_KEY: "",
     C5_GROUP: "", C3_GROUP: "", CHAT_FILE: "", C3_CHAT_FILE: "",
     DATA_SOURCE: "live",
+    // Their session broadcasts and nothing else, so it must not tell them to
+    // go and choose C5 and C3 groups that do not exist for them.
+    BROADCAST_ONLY: "1",
     // Customers do not get a prewarmed browser: one starts when they press
     // Connect, which is also when they are there to scan it.
     WA_PREWARM: "0",

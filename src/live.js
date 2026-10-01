@@ -134,6 +134,10 @@ const DEFAULT_GROUPS = Object.freeze({
   c3: String(process.env.C3_GROUP || "").trim(),
 });
 
+// A customer's session only broadcasts: no groups are captured, no history is
+// pulled, and the instructions must not mention either.
+const BROADCAST_ONLY = process.env.BROADCAST_ONLY === "1";
+
 const LINKED_FLAG = process.env.LINKED_FLAG || path.join(__dirname, "..", "data", "linked.flag");
 function markLinked(on) {
   try {
@@ -638,6 +642,9 @@ function start({ fresh = false, phone } = {}) {
       await syncAll();
       scheduleCatchUpPull();
       startRecheck();
+    } else if (BROADCAST_ONLY) {
+      // A customer has no C5 or C3 groups to choose: their next step is a list.
+      step("Linked. Go to Broadcast to pick the chats you send to.", "info");
     } else {
       step("Linked. Now enter the C5 and C3 group names below and press Save groups & pull history", "info");
       if (!process.env.WWEBJS_PATH) {
