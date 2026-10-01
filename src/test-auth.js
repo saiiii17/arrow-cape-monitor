@@ -34,6 +34,7 @@ const srv = spawn(process.execPath, [path.join(__dirname, "server.js")], {
     LISTS_FILE: path.join(tmp, "l.json"), UPLOAD_DIR: path.join(tmp, "up"),
     LIVE_STORE_DIR: path.join(tmp, "store"), WATCH_FILE: path.join(tmp, "w.json"),
     LINKED_FLAG: path.join(tmp, "linked.flag"), WWEBJS_PATH: path.join(tmp, "wwebjs"),
+    USERS_DATA_DIR: path.join(tmp, "customers"),
   },
   stdio: "ignore",
 });
@@ -209,6 +210,57 @@ const authz = require("./authz");
       assert.notStrictEqual(r.status, 401, `${p} should be open to a customer`);
     }
   });
+
+  console.log("\nthe customer's WhatsApp is a separate process with separate files");
+
+  await test("a customer's broadcast lists are their own, not the admin's", async () => {
+    // The admin's lists live in this server's own files.
+    await post("/api/broadcast/lists", { lists: [
+      { id: "main", name: "THE BROKERS LIST", chats: [{ id: "secret@c.us", name: "A Broker Contact" }] },
+    ] }, adminCookie);
+    const mine = await (await req("/api/broadcast/lists", { headers: { cookie: adminCookie } })).json();
+    assert.strictEqual(mine.lists[0].name, "THE BROKERS LIST");
+
+    // The customer's come from their own worker, and start empty.
+    const theirs = await (await req("/api/broadcast/lists", { headers: { cookie: custCookie } })).json();
+    assert.ok(theirs.lists, `expected the customer's own lists, got ${JSON.stringify(theirs)}`);
+    assert.notStrictEqual(theirs.lists[0].name, "THE BROKERS LIST",
+      "the customer was served the broker's list");
+    assert.strictEqual(theirs.lists[0].chats.length, 0, "a new customer starts with nothing in their list");
+  });
+
+  await test("what the customer saves cannot touch what the admin has", async () => {
+    await post("/api/broadcast/lists", { lists: [
+      { id: "main", name: "Customer list", chats: [{ id: "theirs@c.us", name: "Their Contact" }] },
+    ] }, custCookie);
+    const mine = await (await req("/api/broadcast/lists", { headers: { cookie: adminCookie } })).json();
+    assert.strictEqual(mine.lists[0].name, "THE BROKERS LIST", "the admin's list was overwritten");
+    assert.strictEqual(mine.lists[0].chats[0].name, "A Broker Contact");
+  });
+
+  await test("the customer's files are written under their own account folder", async () => {
+    const list = await (await req("/api/users", { headers: { cookie: adminCookie } })).json();
+    const cust = list.users.find((u) => u.email === CUST.email);
+    const dir = path.join(tmp, "customers", cust.id);
+    assert.ok(fs.existsSync(dir), `expected ${dir} to exist`);
+    const saved = JSON.parse(fs.readFileSync(path.join(dir, "broadcast-lists.json"), "utf8"));
+    assert.strictEqual(saved[0].chats[0].name, "Their Contact");
+    // And nothing of the broker's is in there.
+    const all = fs.readdirSync(dir).join(" ");
+    assert.ok(!all.includes("digest") && !all.includes("c3"), `unexpected files: ${all}`);
+  });
+
+  await test("the admin is told which customer sessions are running", async () => {
+    const r = await req("/api/admin/workers", { headers: { cookie: adminCookie } });
+    assert.strictEqual(r.status, 200);
+    const d = await r.json();
+    assert.ok(Array.isArray(d.running), "expected a list of running sessions");
+    assert.ok(d.running.some((w) => w.email === CUST.email), "the customer's session should be listed");
+    assert.ok(typeof d.estimatedMemoryGb === "number", "and what it is costing in memory");
+  });
+
+  await test("a customer cannot see who else has a session running", async () =>
+    assert.strictEqual((await req("/api/admin/workers", { headers: { cookie: custCookie } })).status, 403));
 
   console.log("\nsessions");
 

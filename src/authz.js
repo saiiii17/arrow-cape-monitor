@@ -75,6 +75,7 @@ const ADMIN_ONLY = new Set([
   "/api/users/delete",
   "/api/admin/2fa",          // enrolling and removing the admin's 2FA
   "/api/admin/2fa/confirm",
+  "/api/admin/workers",      // which customers' sessions are running
 ]);
 
 const PUBLIC_PREFIXES = ["/assets/"];

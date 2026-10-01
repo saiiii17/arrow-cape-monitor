@@ -11,6 +11,7 @@ const crypto = require("crypto");
 const auth = require("./auth");
 const authz = require("./authz");
 const users = require("./users");
+const workers = require("./workers");
 
 // Secrets mid-enrolment: held in memory only, so a 2FA setup that is abandoned
 // leaves nothing behind.
@@ -164,6 +165,14 @@ const server = http.createServer(async (req, res) => {
   // a null account rather than assume one.
   const isAdmin = Boolean(who && who.role === "admin");
 
+  // A customer's WhatsApp and broadcasting run in their own process, pointed at
+  // their own directories. the owner stays in this one, as he always has. This is
+  // what makes the separation physical: a customer's requests never reach the
+  // live session holding the broker's chats, because they are not handled here.
+  if (who && !isAdmin && (url.pathname.startsWith("/api/wa/") || url.pathname.startsWith("/api/broadcast/"))) {
+    return workers.proxy(who.id, req, res, url.pathname, url.search);
+  }
+
   if (url.pathname === "/api/session") {
     if (!who) return json(res, 401, { error: "Sign in required" });
     return json(res, 200, {
@@ -172,6 +181,20 @@ const server = http.createServer(async (req, res) => {
       // What the page may draw. The server has already decided; this only saves
       // the page from rendering a tab that would be refused anyway.
       can: { broadcast: true, accounts: isAdmin, c5: isAdmin, c3: isAdmin, matches: isAdmin, history: isAdmin },
+    });
+  }
+
+  // Which customers currently have a browser running, and what it is costing.
+  if (url.pathname === "/api/admin/workers") {
+    const run = workers.running();
+    const named = run.map((w) => {
+      const u = users.findById(w.id);
+      return { ...w, email: u ? u.email : "(deleted)", name: u ? u.name : "" };
+    });
+    return json(res, 200, {
+      running: named,
+      // Measured on a linked account: roughly 1.2 GB of memory each.
+      estimatedMemoryGb: Math.round(named.length * 1.2 * 10) / 10,
     });
   }
 

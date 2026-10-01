@@ -24,6 +24,8 @@ _chat 2.txt
 data/linked.flag
 # runtime state and captured chats -- never publish real messages or contacts
 data/dev/
+data/customers/
+data/users.json
 data/uploads/
 data/last-broadcast.json
 data/broadcast-lists.json
