@@ -20,10 +20,8 @@ services:
     disk:
       name: data
       mountPath: /app/data
-      sizeGB: 1
+      sizeGB: 5          # ~0.5 GB per linked WhatsApp, plus the message store
     envVars:
-      - key: PORT
-        value: 4321
       - key: WWEBJS_PATH
         value: /app/data/wwebjs_auth
       - key: C3_PROVIDER

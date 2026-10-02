@@ -703,11 +703,6 @@ try {
   /* non-fatal */
 }
 
-// Start Chrome immediately so the QR is ready before anyone clicks Connect.
-// A second instance must not launch a browser on a profile someone else owns.
-if (profileOwner) console.log("  not starting WhatsApp here — the profile belongs to another instance");
-else try { live.prewarm(); } catch { /* non-fatal */ }
-
 server.listen(PORT, "0.0.0.0", () => {
   const dates = datesAvailable();
   console.log(`\n  C5 account monitor  →  http://localhost:${PORT}`);
@@ -758,3 +753,16 @@ server.listen(PORT, "0.0.0.0", () => {
   }
   console.log(`  ${dates.length} days loaded (${dates[0]} .. ${dates[dates.length - 1]})\n`);
 });
+
+// Only once the port is answering. Starting Chrome before this made the host
+// wait through a browser launch and a history pull before its first health
+// check, which on a slow deploy reads as a failed one.
+setTimeout(() => {
+  if (profileOwner) {
+    console.log("  not starting WhatsApp here — the profile belongs to another instance");
+    return;
+  }
+  // Ready before anyone presses Connect, so the QR is already waiting.
+  try { live.prewarm(); } catch { /* non-fatal */ }
+}, Number(process.env.PREWARM_DELAY_MS || 1500));
+
