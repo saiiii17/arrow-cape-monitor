@@ -11,7 +11,7 @@
 # the chosen groups, and the extraction caches (so history is not re-paid).
 services:
   - type: web
-    name: arrow-cape-monitor
+    name: surfboard-monitor
     runtime: docker
     plan: standard          # 1 CPU / 2 GB
     # /healthz is public and always will be. /api/dates needs an admin session

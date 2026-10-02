@@ -1,4 +1,4 @@
-# Arrow Cape
+# Surfboard
 
 Broadcast one WhatsApp message to many chats, each greeted by name, from a web
 app. Built for a shipbroking desk that sends the same rundown to dozens of

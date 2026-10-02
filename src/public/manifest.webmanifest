@@ -1,6 +1,6 @@
 {
-  "name": "Arrow Cape Monitor",
-  "short_name": "Arrow Cape",
+  "name": "Surfboard Monitor",
+  "short_name": "Surfboard",
   "description": "C5 account updates, C3 cargo and tonnage, and WhatsApp broadcast for the Capesize desk.",
   "start_url": "/",
   "scope": "/",

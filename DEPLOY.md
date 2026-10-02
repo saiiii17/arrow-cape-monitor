@@ -19,7 +19,7 @@ by bursting, but pairing (auth + inject) needs sustained CPU and never completes
 Railway's free ceiling matches the configuration measured at 10 s to QR.
 
 1. https://railway.app → sign in with GitHub (`saiiii17`)
-2. **New Project → Deploy from GitHub repo** → `arrow-cape-monitor`
+2. **New Project → Deploy from GitHub repo** → `surfboard-monitor`
 3. Railway reads `railway.json` and builds the `Dockerfile`.
 4. **Variables** → add:
    - `ANTHROPIC_API_KEY`

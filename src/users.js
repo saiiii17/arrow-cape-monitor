@@ -204,7 +204,7 @@ function verifyTotp(secret, code, { at = Date.now(), window = 1 } = {}) {
 
 // What an authenticator app scans. The secret never leaves the server except
 // here, once, while the admin is enrolling.
-function totpUri(secret, email, issuer = "Arrow Cape") {
+function totpUri(secret, email, issuer = "Surfboard") {
   return `otpauth://totp/${encodeURIComponent(issuer)}:${encodeURIComponent(email)}` +
     `?secret=${secret}&issuer=${encodeURIComponent(issuer)}&algorithm=SHA1&digits=6&period=30`;
 }
