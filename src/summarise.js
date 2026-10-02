@@ -19,7 +19,7 @@ RULES
 - Never add or change a price qualifier (mid / hi / low / sub / circa). "hi 17s"
   must not become "mid-hi 17s".
 - Drop restrictions (max age, nuke/std, DA caps) unless nothing else remains --
-  the owner asked for the short form and can click through to the original.
+  The owner asked for the short form and can click through to the original.
 - Copy every number, rate, date and laycan EXACTLY as written. Never reformat,
   convert, round, or expand them. "160/10" stays "160/10". "mid-hi 17s" stays
   "mid-hi 17s". "$16-16.25" stays "$16-16.25".

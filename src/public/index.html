@@ -1475,7 +1475,7 @@ function waRender(st){
     qr.innerHTML="";
     qr.appendChild(el("div","sub",`Link code for ${st.pairPhone||"your number"}:`));
     qr.appendChild(el("div","paircode",pretty));
-    // the owner switches from this app to WhatsApp to enter it: copying beats memorising.
+    // The owner switches from this app to WhatsApp to enter it: copying beats memorising.
     const cp=el("button","btn","Copy code"); cp.style.cssText="margin-top:8px;width:100%";
     cp.onclick=async()=>{ try{ await navigator.clipboard.writeText(c); toast("Code copied — paste it in WhatsApp"); }catch{ toast(pretty); } };
     qr.appendChild(cp);
@@ -2268,7 +2268,7 @@ function markQuick(){
   }
 }
 
-// the owner: "any UI I can extract from should be fine" — so the current view is
+// The owner: "any UI I can extract from should be fine" — so the current view is
 // downloadable as CSV (rows) plus the WhatsApp-ready text.
 function saveFile(name, text, type){
   const url=URL.createObjectURL(new Blob([text],{type}));

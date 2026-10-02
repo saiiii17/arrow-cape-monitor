@@ -35,7 +35,7 @@ const waitDone = async () => { for (let i = 0; i < 200 && live.broadcastStatus()
     const saved = live.saveTags([
       { id: "111@g.us", name: "Brokers" },
       { id: "111@g.us", name: "Brokers again" },
-      { id: "971500000000@c.us", name: "the owner" },
+      { id: "971500000000@c.us", name: "Priya" },
       { name: "no id" },
     ]);
     assert.strictEqual(saved.length, 2);
@@ -256,7 +256,7 @@ const waitDone = async () => { for (let i = 0; i < 200 && live.broadcastStatus()
   const greet = (name, isGroup) => live.personalise("Good morning {name}", who(name, isGroup));
 
   await test("a plain first name is used as it is", () =>
-    assert.strictEqual(greet("the owner"), "Good morning the owner"));
+    assert.strictEqual(greet("Priya"), "Good morning Priya"));
 
   await test("the company falls away", () => {
     assert.strictEqual(greet("Meridian Shipping Pte Ltd"), "Good morning Meridian");
@@ -284,7 +284,7 @@ const waitDone = async () => { for (let i = 0; i < 200 && live.broadcastStatus()
 
   await test("the message is untouched when it asks for no name", () => {
     const plain = "C5 fixed at 24.50, BHP/RIO steady";
-    assert.strictEqual(live.personalise(plain, who("the owner")), plain);
+    assert.strictEqual(live.personalise(plain, who("Priya")), plain);
     assert.strictEqual(live.hasTokens(plain), false);
   });
 
@@ -294,13 +294,13 @@ const waitDone = async () => { for (let i = 0; i < 200 && live.broadcastStatus()
 
   await test("spacing and case in the token do not matter", () => {
     for (const tok of ["{name}", "{ name }", "{Name}", "{firstname}", "{first_name}"]) {
-      assert.strictEqual(live.personalise(`Hi ${tok}`, who("the owner")), "Hi the owner", tok);
+      assert.strictEqual(live.personalise(`Hi ${tok}`, who("Priya")), "Hi Priya", tok);
     }
   });
 
   await test("the same name is used more than once when asked for twice", () =>
-    assert.strictEqual(live.personalise("{name}, morning. Thanks {name}.", who("the owner")),
-      "the owner, morning. Thanks the owner."));
+    assert.strictEqual(live.personalise("{name}, morning. Thanks {name}.", who("Priya")),
+      "Priya, morning. Thanks Priya."));
 
   await test("every chat in a send gets its own name", async () => {
     live.saveLists([{ id: "main", name: "Main list", chats: [
