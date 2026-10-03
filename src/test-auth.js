@@ -122,6 +122,48 @@ const authz = require("./authz");
     assert.strictEqual(r.status, 400);
   });
 
+  await test("with OPEN_SIGNUP on, a new account can sign in at once", async () => {
+    // A separate server, because the setting is read at registration time and
+    // the rest of this suite relies on approval being required.
+    const t2 = fs.mkdtempSync(path.join(os.tmpdir(), "open-signup-"));
+    const port2 = 20000 + Math.floor(Math.random() * 20000);
+    const srv2 = spawn(process.execPath, [path.join(__dirname, "server.js")], {
+      env: { ...process.env, PORT: String(port2), WA_PREWARM: "0", DATA_SOURCE: "sample",
+        OPEN_SIGNUP: "1", USERS_FILE: path.join(t2, "u.json"), USERS_DATA_DIR: path.join(t2, "c"),
+        ADMIN_EMAIL: "boss@example.com", ADMIN_PASSWORD: "bosspassword1",
+        APP_PASSWORD: "", SESSION_SECRET: "open-signup-test",
+        BROADCAST_FILE: path.join(t2, "b.json"), RELAY_FILE: path.join(t2, "r.json"),
+        LISTS_FILE: path.join(t2, "l.json"), LIVE_STORE_DIR: path.join(t2, "s"),
+        WATCH_FILE: path.join(t2, "w.json"), LINKED_FLAG: path.join(t2, "f"),
+        WWEBJS_PATH: path.join(t2, "wa"), REGISTER_ATTEMPTS_PER_MIN: "100" },
+      stdio: "ignore",
+    });
+    const B2 = `http://localhost:${port2}`;
+    for (let i = 0; i < 100; i++) {
+      try { await fetch(B2 + "/healthz"); break; } catch { await new Promise((r) => setTimeout(r, 150)); }
+    }
+    const p2 = (path_, body) => fetch(B2 + path_, { method: "POST", redirect: "manual",
+      headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+
+    const reg = await p2("/api/register", { email: "walkup@example.com", password: "walkuppass1", name: "Walk Up" });
+    const rd = await reg.json();
+    assert.strictEqual(reg.status, 200, JSON.stringify(rd));
+    assert.strictEqual(rd.pending, false, "with open sign-up nobody waits");
+
+    const login = await p2("/api/login", { email: "walkup@example.com", password: "walkuppass1" });
+    assert.strictEqual(login.status, 200, "they should be able to sign in straight away");
+    const cookie = String(login.headers.get("set-cookie") || "").split(";")[0];
+
+    // Open sign-up must not open anything else: they are still only a customer.
+    const denied = await fetch(B2 + "/api/digest", { headers: { cookie } });
+    assert.strictEqual(denied.status, 403, "an open sign-up account is still refused the admin's data");
+    const allowed = await fetch(B2 + "/api/broadcast/lists", { headers: { cookie } });
+    assert.strictEqual(allowed.status, 200, "but they do get the broadcast tools");
+
+    srv2.kill();
+    try { fs.rmSync(t2, { recursive: true, force: true }); } catch { /* ignore */ }
+  });
+
   console.log("\nthe admin");
 
   let adminCookie = "";

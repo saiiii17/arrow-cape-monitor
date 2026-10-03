@@ -126,9 +126,14 @@ const server = http.createServer(async (req, res) => {
     const regLimit = Number(process.env.REGISTER_ATTEMPTS_PER_MIN || 5);
     if (!auth.allowAttempt(ip, "register", regLimit)) return json(res, 429, { error: "Too many attempts — wait a minute" });
     const { email, password, name } = await readBody(req);
+    // Approving by hand is the safe default: an account that cannot sign in
+    // cannot start a WhatsApp session on this server. OPEN_SIGNUP=1 lets anyone
+    // who registers straight in, which is what a trial wants and what a public
+    // URL should not be left on.
+    const open = process.env.OPEN_SIGNUP === "1";
     try {
-      users.createUser({ email, password, name, role: "user", status: "pending" });
-      return json(res, 200, { ok: true, pending: true });
+      users.createUser({ email, password, name, role: "user", status: open ? "active" : "pending" });
+      return json(res, 200, { ok: true, pending: !open });
     } catch (e) {
       return json(res, 400, { error: e.message });
     }

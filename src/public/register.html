@@ -75,11 +75,11 @@
          rather than leaving someone trying to sign in and failing. -->
     <div id="done" class="done" hidden>
       <div class="tick">✓</div>
-      <h2>Request received</h2>
-      <p>Your account has been created but cannot be used yet. We review every request by hand,
+      <h2 id="doneTitle">Request received</h2>
+      <p id="doneBody">Your account has been created but cannot be used yet. We review every request by hand,
          usually within a working day. You will be able to sign in as soon as it is approved.</p>
-      <p>Nothing else is needed from you now.</p>
-      <p class="foot"><a href="/login">Back to sign in</a></p>
+      <p id="doneExtra">Nothing else is needed from you now.</p>
+      <p class="foot"><a href="/login" id="doneLink">Back to sign in</a></p>
     </div>
 
     <p class="links">
@@ -106,7 +106,18 @@
         body: JSON.stringify({ email, password: pw, name: $("#name").value.trim() }),
       });
       const d = await r.json().catch(() => ({}));
-      if (r.ok) { $("#form").hidden = true; $("#done").hidden = false; return; }
+      if (r.ok) {
+        // Straight in when sign-up is open; otherwise it waits for approval.
+        if (!d.pending) {
+          document.querySelector("#doneTitle").textContent = "You're in";
+          document.querySelector("#doneBody").innerHTML =
+            "Your account is ready. Sign in and link your WhatsApp to start broadcasting.";
+          document.querySelector("#doneExtra").textContent = "";
+          document.querySelector("#doneLink").textContent = "Sign in";
+        }
+        $("#form").hidden = true; $("#done").hidden = false;
+        return;
+      }
       msg(d.error || "Could not create the account", "bad");
     } catch { msg("Could not reach the server", "bad"); }
     go.disabled = false;
